@@ -17,6 +17,7 @@ import org.springframework.web.server.ResponseStatusException;
 public class DocumentService {
     private final DocumentRepository documentRepository;
     private final DocumentShareRepository shareRepository;
+    private final DocumentSnapshotRepository snapshotRepository;
     private final CourseService courseService;
     private final CourseWeekService weekService;
     private final UserRepository userRepository;
@@ -24,12 +25,14 @@ public class DocumentService {
     public DocumentService(
             DocumentRepository documentRepository,
             DocumentShareRepository shareRepository,
+            DocumentSnapshotRepository snapshotRepository,
             CourseService courseService,
             CourseWeekService weekService,
             UserRepository userRepository
     ) {
         this.documentRepository = documentRepository;
         this.shareRepository = shareRepository;
+        this.snapshotRepository = snapshotRepository;
         this.courseService = courseService;
         this.weekService = weekService;
         this.userRepository = userRepository;
@@ -57,7 +60,13 @@ public class DocumentService {
         document.setCourse(course);
         document.setWeek(week);
         document.setTitle(title.trim());
-        return documentRepository.save(document);
+        Document saved = documentRepository.save(document);
+        DocumentSnapshot snapshot = new DocumentSnapshot();
+        snapshot.setDocument(saved);
+        snapshot.setRev(0);
+        snapshot.setSnapshotJson(saved.getSnapshotJson());
+        snapshotRepository.save(snapshot);
+        return saved;
     }
 
     public Document getDocumentForRead(Long documentId, User user) {
