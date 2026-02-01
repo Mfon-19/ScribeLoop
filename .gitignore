@@ -1,0 +1,22 @@
+# Node
+node_modules/
+.next/
+out/
+npm-debug.log*
+yarn-error.log*
+
+# Java
+backend/target/
+*.class
+*.log
+*.jar
+*.war
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Env
+.env
+.env.local
