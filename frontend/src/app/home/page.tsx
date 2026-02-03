@@ -1,4 +1,5 @@
 import Link from "next/link";
+import HomeDashboard from "@/components/HomeDashboard";
 
 export default function HomePage() {
   return (
@@ -16,27 +17,21 @@ export default function HomePage() {
         </Link>
       </header>
 
-      <main className="mx-auto flex w-full max-w-5xl flex-col gap-8 px-6 pb-24 pt-10">
+      <main className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6 pb-24 pt-6">
         <section className="rounded-3xl border border-[color:var(--surface-border)] bg-[color:var(--surface)] p-8 shadow-[0_20px_50px_rgba(23,23,23,0.08)]">
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--muted)]">
             Workspace
           </p>
           <h1 className="mt-4 text-3xl font-semibold tracking-tight">
-            You are in. Build your first course space.
+            Your courses and shared notes.
           </h1>
           <p className="mt-3 max-w-2xl text-base text-[color:var(--muted)]">
-            The dashboard and collaboration tools will live here. Next up is
-            creating courses, weeks, and shared documents.
+            Jump into a document to collaborate live or start a new week of
+            notes.
           </p>
-          <div className="mt-6 flex flex-wrap gap-3">
-            <button className="rounded-full bg-[color:var(--accent)] px-5 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white shadow-[0_12px_24px_rgba(192,107,44,0.2)]">
-              Create course
-            </button>
-            <button className="rounded-full border border-[color:var(--surface-border)] px-5 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--foreground)]">
-              Invite teammates
-            </button>
-          </div>
         </section>
+
+        <HomeDashboard />
       </main>
     </div>
   );
