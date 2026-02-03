@@ -141,6 +141,18 @@ public class DocumentService {
         return shareRepository.save(share);
     }
 
+    public DocumentAccessRole getAccessRole(Long documentId, User user) {
+        Document document = getDocumentForRead(documentId, user);
+        if (isOwner(document, user)) {
+            return DocumentAccessRole.OWNER;
+        }
+        DocumentShare share = shareRepository.findByDocumentIdAndUserId(documentId, user.getId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Document not found"));
+        return share.getRole() == DocumentShareRole.EDITOR
+                ? DocumentAccessRole.EDITOR
+                : DocumentAccessRole.VIEWER;
+    }
+
     private boolean isOwner(Document document, User user) {
         return document.getCourse().getOwner().getId().equals(user.getId());
     }

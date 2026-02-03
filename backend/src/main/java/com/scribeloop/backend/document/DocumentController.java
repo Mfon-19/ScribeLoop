@@ -5,6 +5,7 @@ import com.scribeloop.backend.document.DocumentDto.DocumentResponse;
 import com.scribeloop.backend.document.DocumentDto.DocumentUpdateRequest;
 import com.scribeloop.backend.document.DocumentShareDto.ShareRequest;
 import com.scribeloop.backend.document.DocumentShareDto.ShareResponse;
+import com.scribeloop.backend.document.DocumentAccessDto;
 import com.scribeloop.backend.user.UserPrincipal;
 import jakarta.validation.Valid;
 import java.util.List;
@@ -60,6 +61,16 @@ public class DocumentController {
             @PathVariable Long documentId
     ) {
         return toResponse(documentService.getDocumentForRead(documentId, principal.getUser()));
+    }
+
+    @GetMapping("/documents/{documentId}/access")
+    public DocumentAccessDto getAccess(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @PathVariable Long documentId
+    ) {
+        DocumentAccessRole role = documentService.getAccessRole(documentId, principal.getUser());
+        boolean canEdit = role == DocumentAccessRole.OWNER || role == DocumentAccessRole.EDITOR;
+        return new DocumentAccessDto(role, canEdit);
     }
 
     @PatchMapping("/documents/{documentId}")
