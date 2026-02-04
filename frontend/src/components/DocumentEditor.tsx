@@ -44,12 +44,6 @@ type ShareItem = {
   role: ShareRole;
 };
 
-type Collaborator = {
-  id: number | string;
-  name: string;
-  color: string;
-};
-
 type StatusState = "Connecting..." | "Connected" | "Synced" | "Disconnected" | "Auth failed";
 
 const API_BASE_URL =
@@ -97,7 +91,6 @@ export default function DocumentEditor() {
   const [accessRole, setAccessRole] = useState<AccessResponse["role"]>(
     "VIEWER"
   );
-  const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
   const [shares, setShares] = useState<ShareItem[]>([]);
   const [shareEmail, setShareEmail] = useState("");
   const [shareRole, setShareRole] = useState<ShareRole>("VIEWER");
@@ -115,8 +108,9 @@ export default function DocumentEditor() {
   const user = useMemo(() => {
     if (!token) return null;
     const claims = decodeJwt(token);
-    const name = claims?.sub ?? "Collaborator";
-    const id = claims?.uid ?? name;
+    const fullName = claims?.sub ?? "Collaborator";
+    const name = formatDisplayName(fullName);
+    const id = claims?.uid ?? fullName;
     return {
       id,
       name,
@@ -395,15 +389,6 @@ export default function DocumentEditor() {
       onAuthenticationFailed: () => {
         setStatus("Auth failed");
       },
-      onAwarenessChange: ({ states }) => {
-        const next = new Map<string | number, Collaborator>();
-        states.forEach((state) => {
-          const userState = state.user as Collaborator | undefined;
-          if (!userState) return;
-          next.set(userState.id ?? userState.name, userState);
-        });
-        setCollaborators(Array.from(next.values()));
-      },
       onStateless: ({ payload }) => {
         if (!payload) return;
         const decoded = decodeStatelessPayload(payload);
@@ -479,6 +464,15 @@ export default function DocumentEditor() {
               CollaborationCaret.configure({
                 provider,
                 user,
+                render: (cursorUser) => {
+                  const caret = document.createElement("span");
+                  caret.classList.add("scribeloop-caret");
+                  caret.style.setProperty(
+                    "--caret-color",
+                    cursorUser?.color ?? "#2F6BFF"
+                  );
+                  return caret;
+                },
               }),
             ]
           : []),
@@ -794,31 +788,6 @@ export default function DocumentEditor() {
           </section>
         ) : null}
 
-        <section className="rounded-3xl border border-[color:var(--surface-border)] bg-[color:var(--surface)] p-6 shadow-[0_12px_32px_rgba(23,23,23,0.08)]">
-          <h2 className="text-sm font-semibold uppercase tracking-[0.2em] text-[color:var(--muted)]">
-            Active collaborators
-          </h2>
-          <div className="mt-4 flex flex-wrap gap-3">
-            {collaborators.length === 0 ? (
-              <p className="text-sm text-[color:var(--muted)]">
-                No active cursors yet.
-              </p>
-            ) : (
-              collaborators.map((member) => (
-                <div
-                  key={member.id}
-                  className="flex items-center gap-2 rounded-full border border-[color:var(--surface-border)] px-4 py-2 text-xs font-semibold"
-                >
-                  <span
-                    className="h-2.5 w-2.5 rounded-full"
-                    style={{ backgroundColor: member.color }}
-                  />
-                  {member.name}
-                </div>
-              ))
-            )}
-          </div>
-        </section>
       </main>
     </div>
   );
@@ -855,6 +824,13 @@ function decodeStatelessPayload(payload: unknown) {
     return new TextDecoder().decode(new Uint8Array(payload));
   }
   return null;
+}
+
+function formatDisplayName(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return "Collaborator";
+  const atIndex = trimmed.indexOf("@");
+  return atIndex > 0 ? trimmed.slice(0, atIndex) : trimmed;
 }
 
 function ToolbarButton({
