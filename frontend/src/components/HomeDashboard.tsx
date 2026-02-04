@@ -60,7 +60,7 @@ export default function HomeDashboard() {
       },
     });
 
-    if (courseResponse.status === 401) {
+    if (courseResponse.status === 401 || courseResponse.status === 403) {
       router.push("/auth");
       return [];
     }
@@ -157,7 +157,7 @@ export default function HomeDashboard() {
         body: JSON.stringify({ title: createTitle.trim() }),
       });
 
-      if (response.status === 401) {
+      if (response.status === 401 || response.status === 403) {
         router.push("/auth");
         return;
       }
@@ -260,7 +260,7 @@ export default function HomeDashboard() {
         body: JSON.stringify({ title, courseId, weekId: null }),
       });
 
-      if (response.status === 401) {
+      if (response.status === 401 || response.status === 403) {
         router.push("/auth");
         return;
       }

@@ -102,7 +102,12 @@ export default function DocumentEditor() {
         }),
       ]);
 
-      if (docResponse.status === 401 || accessResponse.status === 401) {
+      if (
+        docResponse.status === 401 ||
+        docResponse.status === 403 ||
+        accessResponse.status === 401 ||
+        accessResponse.status === 403
+      ) {
         router.push("/auth");
         return;
       }
@@ -217,6 +222,7 @@ export default function DocumentEditor() {
 
   const editor = useEditor(
     {
+      immediatelyRender: false,
       extensions: [
         StarterKit.configure({
           history: false,
