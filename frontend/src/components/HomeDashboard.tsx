@@ -21,6 +21,18 @@ type Document = {
 
 type CourseWithDocs = Course & { documents: Document[] };
 
+type SharedDocument = {
+  id: number;
+  courseId: number;
+  courseTitle: string;
+  weekId: number | null;
+  title: string;
+  currentRev: number;
+  updatedAt: string | null;
+  ownerEmail: string;
+  role: "VIEWER" | "EDITOR";
+};
+
 type LoadState = {
   loading: boolean;
   error: string | null;
@@ -38,6 +50,8 @@ export default function HomeDashboard() {
     error: null,
     courses: [],
   });
+  const [sharedDocs, setSharedDocs] = useState<SharedDocument[]>([]);
+  const [sharedError, setSharedError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [createTitle, setCreateTitle] = useState("");
   const [createError, setCreateError] = useState<string | null>(null);
@@ -90,6 +104,25 @@ export default function HomeDashboard() {
     return docsByCourse;
   }, [router]);
 
+  const loadSharedDocuments = useCallback(async (token: string) => {
+    const response = await fetch(`${API_BASE_URL}/documents/shared`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (response.status === 401 || response.status === 403) {
+      router.push("/auth");
+      return [];
+    }
+
+    if (!response.ok) {
+      throw new Error("Unable to load shared documents.");
+    }
+
+    return (await response.json()) as SharedDocument[];
+  }, [router]);
+
   useEffect(() => {
     const token = localStorage.getItem("scribeloop_token");
     if (!token) {
@@ -103,9 +136,20 @@ export default function HomeDashboard() {
 
     const load = async () => {
       try {
+        const sharedPromise = loadSharedDocuments(token).catch((err) => {
+          if (!active) return [];
+          setSharedError(
+            err instanceof Error ? err.message : "Unable to load shared documents."
+          );
+          return [];
+        });
         const courses = await loadCourses(token);
         if (!active) return;
         setState({ loading: false, error: null, courses });
+        const shared = await sharedPromise;
+        if (!active) return;
+        setSharedDocs(shared);
+        setSharedError(null);
       } catch (err) {
         if (!active) return;
         setState({
@@ -121,7 +165,7 @@ export default function HomeDashboard() {
     return () => {
       active = false;
     };
-  }, [loadCourses, router]);
+  }, [loadCourses, loadSharedDocuments, router]);
 
   useEffect(() => {
     if (!notice) return;
@@ -288,65 +332,6 @@ export default function HomeDashboard() {
     }
   };
 
-  if (!hasCourses) {
-    return (
-      <div className="rounded-3xl border border-[color:var(--surface-border)] bg-[color:var(--surface)] p-8 shadow-[0_20px_50px_rgba(23,23,23,0.08)]">
-        <h2 className="text-lg font-semibold font-[family-name:var(--font-display)]">
-          No courses yet.
-        </h2>
-        <p className="mt-2 text-sm text-[color:var(--muted)]">
-          Create your first course to start organizing weekly notes.
-        </p>
-        {!createOpen ? (
-          <button
-            onClick={() => setCreateOpen(true)}
-            className="mt-4 rounded-full bg-[color:var(--accent)] px-5 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white"
-          >
-            Create course
-          </button>
-        ) : (
-          <form
-            onSubmit={handleCreateCourse}
-            className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center"
-          >
-            <input
-              value={createTitle}
-              onChange={(event) => {
-                setCreateTitle(event.target.value);
-                if (createError) {
-                  setCreateError(null);
-                }
-              }}
-              className="w-full rounded-full border border-[color:var(--surface-border)] bg-white px-4 py-2 text-sm"
-              placeholder="Course title"
-            />
-            <button
-              type="submit"
-              disabled={createLoading}
-              className="rounded-full bg-[color:var(--accent)] px-5 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white disabled:opacity-70"
-            >
-              {createLoading ? "Saving..." : "Save"}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setCreateOpen(false);
-                setCreateError(null);
-                setCreateTitle("");
-              }}
-              className="rounded-full border border-[color:var(--surface-border)] px-5 py-2 text-xs font-semibold uppercase tracking-[0.2em]"
-            >
-              Cancel
-            </button>
-          </form>
-        )}
-        {createError ? (
-          <p className="mt-3 text-sm text-red-600">{createError}</p>
-        ) : null}
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-6">
       {notice ? (
@@ -362,147 +347,257 @@ export default function HomeDashboard() {
           {notice.message}
         </div>
       ) : null}
-      <section className="rounded-3xl border border-[color:var(--surface-border)] bg-[color:var(--surface)] p-6 shadow-[0_12px_32px_rgba(23,23,23,0.08)]">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--muted)]">
-              Courses
-            </p>
-            <h2 className="text-xl font-semibold tracking-tight font-[family-name:var(--font-display)]">
-              Keep your classes organized.
-            </h2>
-          </div>
-          <button
-            onClick={() => setCreateOpen((prev) => !prev)}
-            className="rounded-full bg-[color:var(--accent)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white"
-          >
-            {createOpen ? "Close" : "New course"}
-          </button>
-        </div>
-
-        {createOpen ? (
-          <form
-            onSubmit={handleCreateCourse}
-            className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center"
-          >
-            <input
-              value={createTitle}
-              onChange={(event) => {
-                setCreateTitle(event.target.value);
-                if (createError) {
-                  setCreateError(null);
-                }
-              }}
-              className="w-full rounded-full border border-[color:var(--surface-border)] bg-white px-4 py-2 text-sm"
-              placeholder="Course title"
-            />
+      {!hasCourses ? (
+        <section className="rounded-3xl border border-[color:var(--surface-border)] bg-[color:var(--surface)] p-8 shadow-[0_20px_50px_rgba(23,23,23,0.08)]">
+          <h2 className="text-lg font-semibold font-[family-name:var(--font-display)]">
+            No courses yet.
+          </h2>
+          <p className="mt-2 text-sm text-[color:var(--muted)]">
+            Create your first course to start organizing weekly notes.
+          </p>
+          {!createOpen ? (
             <button
-              type="submit"
-              disabled={createLoading}
-              className="rounded-full bg-[color:var(--accent)] px-5 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white disabled:opacity-70"
+              onClick={() => setCreateOpen(true)}
+              className="mt-4 rounded-full bg-[color:var(--accent)] px-5 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white"
             >
-              {createLoading ? "Saving..." : "Create"}
+              Create course
             </button>
-            <button
-              type="button"
-              onClick={() => {
-                setCreateOpen(false);
-                setCreateError(null);
-                setCreateTitle("");
-              }}
-              className="rounded-full border border-[color:var(--surface-border)] px-5 py-2 text-xs font-semibold uppercase tracking-[0.2em]"
-            >
-              Cancel
-            </button>
-          </form>
-        ) : null}
-
-        {createError ? (
-          <p className="mt-3 text-sm text-red-600">{createError}</p>
-        ) : null}
-      </section>
-      {state.courses.map((course) => (
-        <section
-          key={course.id}
-          className="rounded-3xl border border-[color:var(--surface-border)] bg-[color:var(--surface)] p-6 shadow-[0_12px_32px_rgba(23,23,23,0.08)]"
-        >
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--muted)]">
-                Course
-              </p>
-              <h2 className="text-xl font-semibold tracking-tight font-[family-name:var(--font-display)]">
-                {course.title}
-              </h2>
-            </div>
-            <button
-              onClick={() => {
-                setDocFormCourseId((prev) =>
-                  prev === course.id ? null : course.id
-                );
-                setDocErrors((prev) => ({ ...prev, [course.id]: null }));
-              }}
-              className="rounded-full border border-[color:var(--surface-border)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em]"
-            >
-              New doc
-            </button>
-          </div>
-
-          {docFormCourseId === course.id ? (
+          ) : (
             <form
-              onSubmit={(event) => handleCreateDocument(course.id, event)}
+              onSubmit={handleCreateCourse}
               className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center"
             >
               <input
-                value={docDrafts[course.id] ?? ""}
+                value={createTitle}
                 onChange={(event) => {
-                  const value = event.target.value;
-                  setDocDrafts((prev) => ({ ...prev, [course.id]: value }));
-                  if (docErrors[course.id]) {
-                    setDocErrors((prev) => ({ ...prev, [course.id]: null }));
+                  setCreateTitle(event.target.value);
+                  if (createError) {
+                    setCreateError(null);
                   }
                 }}
                 className="w-full rounded-full border border-[color:var(--surface-border)] bg-white px-4 py-2 text-sm"
-                placeholder="Document title"
+                placeholder="Course title"
               />
               <button
                 type="submit"
-                disabled={docLoadingId === course.id}
+                disabled={createLoading}
                 className="rounded-full bg-[color:var(--accent)] px-5 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white disabled:opacity-70"
               >
-                {docLoadingId === course.id ? "Saving..." : "Create"}
+                {createLoading ? "Saving..." : "Save"}
               </button>
               <button
                 type="button"
                 onClick={() => {
-                  setDocFormCourseId(null);
-                  setDocDrafts((prev) => ({ ...prev, [course.id]: "" }));
-                  setDocErrors((prev) => ({ ...prev, [course.id]: null }));
+                  setCreateOpen(false);
+                  setCreateError(null);
+                  setCreateTitle("");
                 }}
                 className="rounded-full border border-[color:var(--surface-border)] px-5 py-2 text-xs font-semibold uppercase tracking-[0.2em]"
               >
                 Cancel
               </button>
             </form>
+          )}
+          {createError ? (
+            <p className="mt-3 text-sm text-red-600">{createError}</p>
           ) : null}
+        </section>
+      ) : (
+        <>
+          <section className="rounded-3xl border border-[color:var(--surface-border)] bg-[color:var(--surface)] p-6 shadow-[0_12px_32px_rgba(23,23,23,0.08)]">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--muted)]">
+                  Courses
+                </p>
+                <h2 className="text-xl font-semibold tracking-tight font-[family-name:var(--font-display)]">
+                  Keep your classes organized.
+                </h2>
+              </div>
+              <button
+                onClick={() => setCreateOpen((prev) => !prev)}
+                className="rounded-full bg-[color:var(--accent)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white"
+              >
+                {createOpen ? "Close" : "New course"}
+              </button>
+            </div>
 
-          {docFormCourseId === course.id && docErrors[course.id] ? (
-            <p className="mt-3 text-sm text-red-600">{docErrors[course.id]}</p>
-          ) : null}
+            {createOpen ? (
+              <form
+                onSubmit={handleCreateCourse}
+                className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center"
+              >
+                <input
+                  value={createTitle}
+                  onChange={(event) => {
+                    setCreateTitle(event.target.value);
+                    if (createError) {
+                      setCreateError(null);
+                    }
+                  }}
+                  className="w-full rounded-full border border-[color:var(--surface-border)] bg-white px-4 py-2 text-sm"
+                  placeholder="Course title"
+                />
+                <button
+                  type="submit"
+                  disabled={createLoading}
+                  className="rounded-full bg-[color:var(--accent)] px-5 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white disabled:opacity-70"
+                >
+                  {createLoading ? "Saving..." : "Create"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCreateOpen(false);
+                    setCreateError(null);
+                    setCreateTitle("");
+                  }}
+                  className="rounded-full border border-[color:var(--surface-border)] px-5 py-2 text-xs font-semibold uppercase tracking-[0.2em]"
+                >
+                  Cancel
+                </button>
+              </form>
+            ) : null}
 
+            {createError ? (
+              <p className="mt-3 text-sm text-red-600">{createError}</p>
+            ) : null}
+          </section>
+          {state.courses.map((course) => (
+            <section
+              key={course.id}
+              className="rounded-3xl border border-[color:var(--surface-border)] bg-[color:var(--surface)] p-6 shadow-[0_12px_32px_rgba(23,23,23,0.08)]"
+            >
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--muted)]">
+                    Course
+                  </p>
+                  <h2 className="text-xl font-semibold tracking-tight font-[family-name:var(--font-display)]">
+                    {course.title}
+                  </h2>
+                </div>
+                <button
+                  onClick={() => {
+                    setDocFormCourseId((prev) =>
+                      prev === course.id ? null : course.id
+                    );
+                    setDocErrors((prev) => ({ ...prev, [course.id]: null }));
+                  }}
+                  className="rounded-full border border-[color:var(--surface-border)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em]"
+                >
+                  New doc
+                </button>
+              </div>
+
+              {docFormCourseId === course.id ? (
+                <form
+                  onSubmit={(event) => handleCreateDocument(course.id, event)}
+                  className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center"
+                >
+                  <input
+                    value={docDrafts[course.id] ?? ""}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setDocDrafts((prev) => ({ ...prev, [course.id]: value }));
+                      if (docErrors[course.id]) {
+                        setDocErrors((prev) => ({
+                          ...prev,
+                          [course.id]: null,
+                        }));
+                      }
+                    }}
+                    className="w-full rounded-full border border-[color:var(--surface-border)] bg-white px-4 py-2 text-sm"
+                    placeholder="Document title"
+                  />
+                  <button
+                    type="submit"
+                    disabled={docLoadingId === course.id}
+                    className="rounded-full bg-[color:var(--accent)] px-5 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white disabled:opacity-70"
+                  >
+                    {docLoadingId === course.id ? "Saving..." : "Create"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDocFormCourseId(null);
+                      setDocDrafts((prev) => ({ ...prev, [course.id]: "" }));
+                      setDocErrors((prev) => ({ ...prev, [course.id]: null }));
+                    }}
+                    className="rounded-full border border-[color:var(--surface-border)] px-5 py-2 text-xs font-semibold uppercase tracking-[0.2em]"
+                  >
+                    Cancel
+                  </button>
+                </form>
+              ) : null}
+
+              {docFormCourseId === course.id && docErrors[course.id] ? (
+                <p className="mt-3 text-sm text-red-600">{docErrors[course.id]}</p>
+              ) : null}
+
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                {course.documents.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-[color:var(--surface-border)] p-4 text-sm text-[color:var(--muted)]">
+                    No documents yet.
+                  </div>
+                ) : (
+                  course.documents.map((doc) => (
+                    <Link
+                      key={doc.id}
+                      href={`/docs/${doc.id}`}
+                      className="rounded-2xl border border-[color:var(--surface-border)] bg-white p-4 transition hover:-translate-y-0.5 hover:shadow-[0_12px_24px_rgba(23,23,23,0.08)]"
+                    >
+                      <p className="text-sm font-semibold">{doc.title}</p>
+                      <p className="mt-2 text-xs text-[color:var(--muted)]">
+                        Rev {doc.currentRev} · Updated {formatDate(doc.updatedAt)}
+                      </p>
+                    </Link>
+                  ))
+                )}
+              </div>
+            </section>
+          ))}
+        </>
+      )}
+
+      <section className="rounded-3xl border border-[color:var(--surface-border)] bg-[color:var(--surface)] p-6 shadow-[0_12px_32px_rgba(23,23,23,0.08)]">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--muted)]">
+              Shared with you
+            </p>
+            <h2 className="text-xl font-semibold tracking-tight font-[family-name:var(--font-display)]">
+              Notes from teammates.
+            </h2>
+          </div>
+        </div>
+
+        {sharedError ? (
+          <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {sharedError}
+          </div>
+        ) : (
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            {course.documents.length === 0 ? (
+            {sharedDocs.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-[color:var(--surface-border)] p-4 text-sm text-[color:var(--muted)]">
-                No documents yet.
+                No shared documents yet.
               </div>
             ) : (
-              course.documents.map((doc) => (
+              sharedDocs.map((doc) => (
                 <Link
-                  key={doc.id}
+                  key={`shared-${doc.id}`}
                   href={`/docs/${doc.id}`}
                   className="rounded-2xl border border-[color:var(--surface-border)] bg-white p-4 transition hover:-translate-y-0.5 hover:shadow-[0_12px_24px_rgba(23,23,23,0.08)]"
                 >
-                  <p className="text-sm font-semibold">{doc.title}</p>
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-semibold">{doc.title}</p>
+                    <span className="rounded-full border border-[color:var(--surface-border)] px-2 py-1 text-[0.6rem] font-semibold uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                      {doc.role}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-xs text-[color:var(--muted)]">
+                    {doc.courseTitle} · Shared by {doc.ownerEmail}
+                  </p>
                   <p className="mt-2 text-xs text-[color:var(--muted)]">
                     Rev {doc.currentRev} · Updated {formatDate(doc.updatedAt)}
                   </p>
@@ -510,8 +605,8 @@ export default function HomeDashboard() {
               ))
             )}
           </div>
-        </section>
-      ))}
+        )}
+      </section>
     </div>
   );
 }

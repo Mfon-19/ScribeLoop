@@ -21,7 +21,7 @@ import {
   Undo2,
 } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import * as Y from "yjs";
 
 type DocumentResponse = {
@@ -33,6 +33,15 @@ type DocumentResponse = {
 type AccessResponse = {
   role: "OWNER" | "EDITOR" | "VIEWER";
   canEdit: boolean;
+};
+
+type ShareRole = "VIEWER" | "EDITOR";
+
+type ShareItem = {
+  docId: number;
+  userId: number;
+  email: string;
+  role: ShareRole;
 };
 
 type Collaborator = {
@@ -89,6 +98,13 @@ export default function DocumentEditor() {
     "VIEWER"
   );
   const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
+  const [shares, setShares] = useState<ShareItem[]>([]);
+  const [shareEmail, setShareEmail] = useState("");
+  const [shareRole, setShareRole] = useState<ShareRole>("VIEWER");
+  const [shareError, setShareError] = useState<string | null>(null);
+  const [shareStatus, setShareStatus] = useState<string | null>(null);
+  const [shareLoading, setShareLoading] = useState(false);
+  const [shareListLoading, setShareListLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const dirtyRef = useRef(false);
   const ydoc = useMemo(
@@ -145,11 +161,194 @@ export default function DocumentEditor() {
     [router]
   );
 
+  const loadShares = useCallback(
+    async (authToken: string, docId: number) => {
+      setShareListLoading(true);
+      setShareError(null);
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/documents/${docId}/shares`,
+          {
+            headers: {
+              Authorization: `Bearer ${authToken}`,
+            },
+          }
+        );
+        if (response.status === 401) {
+          router.push("/auth");
+          return;
+        }
+        if (response.status === 403) {
+          throw new Error("Only owners can view shares.");
+        }
+        if (!response.ok) {
+          throw new Error("Unable to load shares.");
+        }
+        const data = (await response.json()) as ShareItem[];
+        setShares(data);
+      } catch (error) {
+        setShareError(
+          error instanceof Error ? error.message : "Unable to load shares."
+        );
+      } finally {
+        setShareListLoading(false);
+      }
+    },
+    [router]
+  );
+
+  const handleShareSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!token) {
+      router.push("/auth");
+      return;
+    }
+    if (!shareEmail.trim()) {
+      setShareError("Email is required.");
+      return;
+    }
+    if (!documentId) return;
+
+    setShareLoading(true);
+    setShareError(null);
+    setShareStatus(null);
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/documents/${documentId}/share`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            email: shareEmail.trim(),
+            role: shareRole,
+          }),
+        }
+      );
+
+      if (response.status === 401) {
+        router.push("/auth");
+        return;
+      }
+      if (response.status === 403) {
+        throw new Error("Only owners can share this document.");
+      }
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as
+          | { message?: string }
+          | null;
+        throw new Error(payload?.message ?? "Unable to share document.");
+      }
+
+      setShareEmail("");
+      setShareRole("VIEWER");
+      setShareStatus("Access granted.");
+      await loadShares(token, documentId);
+    } catch (error) {
+      setShareError(
+        error instanceof Error ? error.message : "Unable to share document."
+      );
+    } finally {
+      setShareLoading(false);
+    }
+  };
+
+  const handleRoleChange = async (userId: number, role: ShareRole) => {
+    if (!token || !documentId) return;
+    setShareError(null);
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/documents/${documentId}/shares/${userId}`,
+        {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ role }),
+        }
+      );
+
+      if (response.status === 401) {
+        router.push("/auth");
+        return;
+      }
+      if (response.status === 403) {
+        throw new Error("Only owners can update roles.");
+      }
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as
+          | { message?: string }
+          | null;
+        throw new Error(payload?.message ?? "Unable to update role.");
+      }
+
+      setShares((prev) =>
+        prev.map((share) =>
+          share.userId === userId ? { ...share, role } : share
+        )
+      );
+    } catch (error) {
+      setShareError(
+        error instanceof Error ? error.message : "Unable to update role."
+      );
+    }
+  };
+
+  const handleRevoke = async (userId: number) => {
+    if (!token || !documentId) return;
+    setShareError(null);
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/documents/${documentId}/shares/${userId}`,
+        {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      if (response.status === 401) {
+        router.push("/auth");
+        return;
+      }
+      if (response.status === 403) {
+        throw new Error("Only owners can revoke access.");
+      }
+
+      if (!response.ok) {
+        throw new Error("Unable to revoke access.");
+      }
+
+      setShares((prev) => prev.filter((share) => share.userId !== userId));
+    } catch (error) {
+      setShareError(
+        error instanceof Error ? error.message : "Unable to revoke access."
+      );
+    }
+  };
+
   useEffect(() => {
     if (!token) {
       router.push("/auth");
     }
   }, [router, token]);
+
+  useEffect(() => {
+    if (!documentId) return;
+    setAccessRole("VIEWER");
+    setCanEdit(false);
+    setShares([]);
+    setShareEmail("");
+    setShareRole("VIEWER");
+    setShareError(null);
+    setShareStatus(null);
+  }, [documentId]);
 
   useEffect(() => {
     if (!token || !documentId || !documentName) return;
@@ -172,6 +371,11 @@ export default function DocumentEditor() {
       active = false;
     };
   }, [documentId, documentName, loadMetadata, token]);
+
+  useEffect(() => {
+    if (accessRole !== "OWNER" || !token || !documentId) return;
+    void loadShares(token, documentId);
+  }, [accessRole, documentId, loadShares, token]);
 
   const provider = useMemo(() => {
     if (!token || !documentName) return null;
@@ -476,6 +680,119 @@ export default function DocumentEditor() {
             </div>
           )}
         </section>
+
+        {accessRole === "OWNER" ? (
+          <section className="rounded-3xl border border-[color:var(--surface-border)] bg-[color:var(--surface)] p-6 shadow-[0_12px_32px_rgba(23,23,23,0.08)]">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--muted)]">
+                  Sharing
+                </p>
+                <h2 className="text-lg font-semibold tracking-tight font-[family-name:var(--font-display)]">
+                  Invite teammates
+                </h2>
+              </div>
+            </div>
+
+            <form
+              onSubmit={handleShareSubmit}
+              className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center"
+            >
+              <input
+                type="email"
+                value={shareEmail}
+                onChange={(event) => {
+                  setShareEmail(event.target.value);
+                  if (shareError) setShareError(null);
+                  if (shareStatus) setShareStatus(null);
+                }}
+                className="w-full rounded-full border border-[color:var(--surface-border)] bg-white px-4 py-2 text-sm"
+                placeholder="student@school.edu"
+                required
+              />
+              <select
+                value={shareRole}
+                onChange={(event) => setShareRole(event.target.value as ShareRole)}
+                className="rounded-full border border-[color:var(--surface-border)] bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em]"
+              >
+                <option value="VIEWER">Viewer</option>
+                <option value="EDITOR">Editor</option>
+              </select>
+              <button
+                type="submit"
+                disabled={shareLoading}
+                className="rounded-full bg-[color:var(--accent)] px-5 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white disabled:opacity-70"
+              >
+                {shareLoading ? "Sharing..." : "Share"}
+              </button>
+            </form>
+
+            {shareError ? (
+              <div className="mt-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                {shareError}
+              </div>
+            ) : null}
+
+            {shareStatus ? (
+              <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+                {shareStatus}
+              </div>
+            ) : null}
+
+            <div className="mt-6">
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--muted)]">
+                Shared access
+              </p>
+              {shareListLoading ? (
+                <p className="mt-3 text-sm text-[color:var(--muted)]">
+                  Loading shares...
+                </p>
+              ) : shares.length === 0 ? (
+                <p className="mt-3 text-sm text-[color:var(--muted)]">
+                  No shared users yet.
+                </p>
+              ) : (
+                <div className="mt-4 grid gap-3">
+                  {shares.map((share) => (
+                    <div
+                      key={`${share.userId}-${share.docId}`}
+                      className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[color:var(--surface-border)] bg-white px-4 py-3"
+                    >
+                      <div>
+                        <p className="text-sm font-semibold">{share.email}</p>
+                        <p className="mt-1 text-xs text-[color:var(--muted)]">
+                          {share.role}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={share.role}
+                          onChange={(event) =>
+                            handleRoleChange(
+                              share.userId,
+                              event.target.value as ShareRole
+                            )
+                          }
+                          className="rounded-full border border-[color:var(--surface-border)] bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em]"
+                        >
+                          <option value="VIEWER">Viewer</option>
+                          <option value="EDITOR">Editor</option>
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => handleRevoke(share.userId)}
+                          className="rounded-full border border-red-200 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-red-600"
+                        >
+                          Revoke
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+        ) : null}
 
         <section className="rounded-3xl border border-[color:var(--surface-border)] bg-[color:var(--surface)] p-6 shadow-[0_12px_32px_rgba(23,23,23,0.08)]">
           <h2 className="text-sm font-semibold uppercase tracking-[0.2em] text-[color:var(--muted)]">

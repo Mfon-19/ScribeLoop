@@ -116,21 +116,18 @@ public class DocumentService {
     }
 
     public List<DocumentShare> listShares(Long documentId, User owner) {
-        Document document = getDocumentForRead(documentId, owner);
-        if (!isOwner(document, owner)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "No access");
-        }
-        return shareRepository.findByDocumentId(documentId);
+        Document document = getOwnedDocument(documentId, owner);
+        return shareRepository.findByDocumentIdWithUser(document.getId());
     }
 
     public DocumentShare shareDocument(Long documentId, String email, DocumentShareRole role, User owner) {
-        Document document = getDocumentForRead(documentId, owner);
-        if (!isOwner(document, owner)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "No access");
-        }
+        Document document = getOwnedDocument(documentId, owner);
 
         User target = userRepository.findByEmailIgnoreCase(email.trim())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
+        if (target.getId().equals(owner.getId())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot share with yourself");
+        }
 
         DocumentShareId id = new DocumentShareId(document.getId(), target.getId());
         DocumentShare share = shareRepository.findById(id).orElseGet(DocumentShare::new);
@@ -139,6 +136,32 @@ public class DocumentService {
         share.setUser(target);
         share.setRole(role);
         return shareRepository.save(share);
+    }
+
+    public List<DocumentShare> listSharedDocuments(User user) {
+        return shareRepository.findByUserIdWithDocument(user.getId());
+    }
+
+    public DocumentShare updateShareRole(
+            Long documentId,
+            Long targetUserId,
+            DocumentShareRole role,
+            User owner
+    ) {
+        Document document = getOwnedDocument(documentId, owner);
+        DocumentShareId id = new DocumentShareId(document.getId(), targetUserId);
+        DocumentShare share = shareRepository.findByIdWithUser(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Share not found"));
+        share.setRole(role);
+        return shareRepository.save(share);
+    }
+
+    public void revokeShare(Long documentId, Long targetUserId, User owner) {
+        Document document = getOwnedDocument(documentId, owner);
+        DocumentShareId id = new DocumentShareId(document.getId(), targetUserId);
+        DocumentShare share = shareRepository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Share not found"));
+        shareRepository.delete(share);
     }
 
     public DocumentAccessRole getAccessRole(Long documentId, User user) {
@@ -155,5 +178,14 @@ public class DocumentService {
 
     private boolean isOwner(Document document, User user) {
         return document.getCourse().getOwner().getId().equals(user.getId());
+    }
+
+    private Document getOwnedDocument(Long documentId, User owner) {
+        Document document = documentRepository.findById(documentId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Document not found"));
+        if (!isOwner(document, owner)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only owners can manage sharing");
+        }
+        return document;
     }
 }

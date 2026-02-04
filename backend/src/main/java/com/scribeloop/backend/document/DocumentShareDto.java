@@ -11,6 +11,22 @@ public final class DocumentShareDto {
     public record ShareRequest(@Email @NotBlank String email, @NotNull DocumentShareRole role) {
     }
 
+    public record ShareRoleUpdateRequest(@NotNull DocumentShareRole role) {
+    }
+
     public record ShareResponse(Long docId, Long userId, String email, DocumentShareRole role) {
+    }
+
+    public record SharedDocumentResponse(
+            Long id,
+            Long courseId,
+            String courseTitle,
+            Long weekId,
+            String title,
+            int currentRev,
+            String updatedAt,
+            String ownerEmail,
+            DocumentShareRole role
+    ) {
     }
 }

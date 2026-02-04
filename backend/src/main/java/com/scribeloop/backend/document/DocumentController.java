@@ -5,6 +5,8 @@ import com.scribeloop.backend.document.DocumentDto.DocumentResponse;
 import com.scribeloop.backend.document.DocumentDto.DocumentUpdateRequest;
 import com.scribeloop.backend.document.DocumentShareDto.ShareRequest;
 import com.scribeloop.backend.document.DocumentShareDto.ShareResponse;
+import com.scribeloop.backend.document.DocumentShareDto.ShareRoleUpdateRequest;
+import com.scribeloop.backend.document.DocumentShareDto.SharedDocumentResponse;
 import com.scribeloop.backend.document.DocumentAccessDto;
 import com.scribeloop.backend.user.UserPrincipal;
 import jakarta.validation.Valid;
@@ -112,6 +114,29 @@ public class DocumentController {
                 .toList();
     }
 
+    @GetMapping("/documents/shared")
+    public List<SharedDocumentResponse> listSharedDocuments(
+            @AuthenticationPrincipal UserPrincipal principal
+    ) {
+        return documentService.listSharedDocuments(principal.getUser())
+                .stream()
+                .map(share -> {
+                    Document document = share.getDocument();
+                    return new SharedDocumentResponse(
+                            document.getId(),
+                            document.getCourse().getId(),
+                            document.getCourse().getTitle(),
+                            document.getWeek() != null ? document.getWeek().getId() : null,
+                            document.getTitle(),
+                            document.getCurrentRev(),
+                            document.getUpdatedAt() != null ? document.getUpdatedAt().toString() : null,
+                            document.getCourse().getOwner().getEmail(),
+                            share.getRole()
+                    );
+                })
+                .toList();
+    }
+
     @PostMapping("/documents/{documentId}/share")
     public ShareResponse shareDocument(
             @AuthenticationPrincipal UserPrincipal principal,
@@ -130,6 +155,36 @@ public class DocumentController {
                 share.getUser().getEmail(),
                 share.getRole()
         );
+    }
+
+    @PatchMapping("/documents/{documentId}/shares/{userId}")
+    public ShareResponse updateShareRole(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @PathVariable Long documentId,
+            @PathVariable Long userId,
+            @Valid @RequestBody ShareRoleUpdateRequest request
+    ) {
+        DocumentShare share = documentService.updateShareRole(
+                documentId,
+                userId,
+                request.role(),
+                principal.getUser()
+        );
+        return new ShareResponse(
+                share.getDocument().getId(),
+                share.getUser().getId(),
+                share.getUser().getEmail(),
+                share.getRole()
+        );
+    }
+
+    @DeleteMapping("/documents/{documentId}/shares/{userId}")
+    public void revokeShare(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @PathVariable Long documentId,
+            @PathVariable Long userId
+    ) {
+        documentService.revokeShare(documentId, userId, principal.getUser());
     }
 
     private DocumentResponse toResponse(Document document) {
