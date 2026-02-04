@@ -453,7 +453,7 @@ export default function DocumentEditor() {
       immediatelyRender: false,
       extensions: [
         StarterKit.configure({
-          history: false,
+          undoRedo: false,
         }),
         Underline,
         Collaboration.configure({
@@ -488,12 +488,13 @@ export default function DocumentEditor() {
     [ydoc, provider, user, canEdit]
   );
 
-  const toolbarState = useEditorState({
-    editor,
-    selector: ({ editor: current }) => ({
-      canUndo: current?.can().chain().focus().undo().run() ?? false,
-      canRedo: current?.can().chain().focus().redo().run() ?? false,
-      isBold: current?.isActive("bold") ?? false,
+  const toolbarState =
+    useEditorState({
+      editor,
+      selector: ({ editor: current }) => ({
+        canUndo: current?.can().chain().focus().undo().run() ?? false,
+        canRedo: current?.can().chain().focus().redo().run() ?? false,
+        isBold: current?.isActive("bold") ?? false,
       isItalic: current?.isActive("italic") ?? false,
       isUnderline: current?.isActive("underline") ?? false,
       isStrike: current?.isActive("strike") ?? false,
@@ -501,11 +502,25 @@ export default function DocumentEditor() {
       isHeading2: current?.isActive("heading", { level: 2 }) ?? false,
       isQuote: current?.isActive("blockquote") ?? false,
       isCode: current?.isActive("code") ?? false,
-      isCodeBlock: current?.isActive("codeBlock") ?? false,
-      isBulletList: current?.isActive("bulletList") ?? false,
-      isOrderedList: current?.isActive("orderedList") ?? false,
-    }),
-  });
+        isCodeBlock: current?.isActive("codeBlock") ?? false,
+        isBulletList: current?.isActive("bulletList") ?? false,
+        isOrderedList: current?.isActive("orderedList") ?? false,
+      }),
+    }) ?? {
+      canUndo: false,
+      canRedo: false,
+      isBold: false,
+      isItalic: false,
+      isUnderline: false,
+      isStrike: false,
+      isHeading1: false,
+      isHeading2: false,
+      isQuote: false,
+      isCode: false,
+      isCodeBlock: false,
+      isBulletList: false,
+      isOrderedList: false,
+    };
 
   useEffect(() => {
     if (!editor) return;
