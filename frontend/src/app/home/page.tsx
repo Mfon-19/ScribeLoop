@@ -22,7 +22,7 @@ export default function HomePage() {
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--muted)]">
             Workspace
           </p>
-          <h1 className="mt-4 text-3xl font-semibold tracking-tight">
+          <h1 className="mt-4 text-3xl font-semibold tracking-tight font-[family-name:var(--font-display)]">
             Your courses and shared notes.
           </h1>
           <p className="mt-3 max-w-2xl text-base text-[color:var(--muted)]">

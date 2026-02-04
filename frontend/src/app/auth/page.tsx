@@ -13,7 +13,7 @@ export default function AuthPage() {
             <span className="h-2 w-2 rounded-full bg-[color:var(--accent)]" />
             Back to ScribeLoop
           </Link>
-          <h1 className="text-4xl font-semibold tracking-tight">
+          <h1 className="text-4xl font-semibold tracking-tight font-[family-name:var(--font-display)]">
             Welcome back to your study hub.
           </h1>
           <p className="text-lg text-[color:var(--muted)]">

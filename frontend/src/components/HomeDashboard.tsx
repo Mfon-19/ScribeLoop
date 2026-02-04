@@ -122,7 +122,9 @@ export default function HomeDashboard() {
   if (!hasCourses) {
     return (
       <div className="rounded-3xl border border-[color:var(--surface-border)] bg-[color:var(--surface)] p-8 shadow-[0_20px_50px_rgba(23,23,23,0.08)]">
-        <h2 className="text-lg font-semibold">No courses yet.</h2>
+        <h2 className="text-lg font-semibold font-[family-name:var(--font-display)]">
+          No courses yet.
+        </h2>
         <p className="mt-2 text-sm text-[color:var(--muted)]">
           Create your first course to start organizing weekly notes.
         </p>
@@ -145,7 +147,7 @@ export default function HomeDashboard() {
               <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--muted)]">
                 Course
               </p>
-              <h2 className="text-xl font-semibold tracking-tight">
+              <h2 className="text-xl font-semibold tracking-tight font-[family-name:var(--font-display)]">
                 {course.title}
               </h2>
             </div>

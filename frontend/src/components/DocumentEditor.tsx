@@ -357,7 +357,9 @@ export default function DocumentEditor() {
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--muted)]">
             Document
           </p>
-          <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+          <h1 className="text-2xl font-semibold tracking-tight font-[family-name:var(--font-display)]">
+            {title}
+          </h1>
           <p className="mt-1 text-xs text-[color:var(--muted)]">
             Rev {rev} · {status}
           </p>
@@ -367,7 +369,7 @@ export default function DocumentEditor() {
             {accessRole}
           </span>
           {!canEdit ? (
-            <span className="rounded-full bg-[#f6eadf] px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--accent-strong)]">
+            <span className="rounded-full bg-[color:var(--accent-soft)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--accent-strong)]">
               Read only
             </span>
           ) : null}

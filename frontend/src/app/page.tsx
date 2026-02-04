@@ -21,7 +21,7 @@ export default function Home() {
             <div className="inline-flex items-center gap-2 rounded-full border border-[color:var(--surface-border)] bg-[color:var(--surface)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--muted)]">
               Live collaboration for study groups
             </div>
-            <h1 className="text-4xl font-semibold leading-tight tracking-tight sm:text-5xl">
+            <h1 className="text-4xl font-semibold leading-tight tracking-tight sm:text-5xl font-[family-name:var(--font-display)]">
               Build living study guides with your classmates.
             </h1>
             <p className="max-w-xl text-lg text-[color:var(--muted)]">
@@ -52,16 +52,16 @@ export default function Home() {
                 <span className="text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--muted)]">
                   Bio 101 - Week 4
                 </span>
-                <span className="rounded-full bg-[#f6eadf] px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--accent-strong)]">
+                <span className="rounded-full bg-[color:var(--accent-soft)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--accent-strong)]">
                   Live
                 </span>
               </div>
               <div className="mt-6 space-y-4">
-                <div className="h-3 w-4/5 rounded-full bg-[#efe6dc]" />
-                <div className="h-3 w-2/3 rounded-full bg-[#efe6dc]" />
-                <div className="h-3 w-3/5 rounded-full bg-[#efe6dc]" />
+                <div className="h-3 w-4/5 rounded-full bg-[color:var(--accent-faint)]" />
+                <div className="h-3 w-2/3 rounded-full bg-[color:var(--accent-faint)]" />
+                <div className="h-3 w-3/5 rounded-full bg-[color:var(--accent-faint)]" />
               </div>
-              <div className="mt-8 rounded-2xl border border-dashed border-[color:var(--surface-border)] bg-[#fbf8f3] px-4 py-3 text-xs text-[color:var(--muted)]">
+              <div className="mt-8 rounded-2xl border border-dashed border-[color:var(--surface-border)] bg-[color:var(--accent-faint)] px-4 py-3 text-xs text-[color:var(--muted)]">
                 Marta is editing - 2 cursors active
               </div>
             </div>
@@ -90,7 +90,7 @@ export default function Home() {
               key={feature.title}
               className="rounded-3xl border border-[color:var(--surface-border)] bg-[color:var(--surface)] p-6 shadow-[0_12px_32px_rgba(23,23,23,0.08)]"
             >
-              <h3 className="text-lg font-semibold tracking-tight">
+              <h3 className="text-lg font-semibold tracking-tight font-[family-name:var(--font-display)]">
                 {feature.title}
               </h3>
               <p className="mt-3 text-sm text-[color:var(--muted)]">
