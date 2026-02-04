@@ -72,13 +72,7 @@ const server = new Server({
   async onStoreDocument({ document, documentName }) {
     const update = Y.encodeStateAsUpdate(document);
     await storeDocument(documentName, update);
-    document.broadcastStateless(
-      JSON.stringify({
-        type: "saved",
-        documentName,
-        timestamp: Date.now(),
-      })
-    );
+    document.broadcastStateless("saved");
   },
 });
 

@@ -6,7 +6,7 @@ import StarterKit from "@tiptap/starter-kit";
 import { EditorContent, useEditor } from "@tiptap/react";
 import { HocuspocusProvider } from "@hocuspocus/provider";
 import { useParams, useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as Y from "yjs";
 
 type DocumentResponse = {
@@ -75,6 +75,7 @@ export default function DocumentEditor() {
   );
   const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const dirtyRef = useRef(false);
   const ydoc = useMemo(
     () => new Y.Doc({ guid: documentName ?? undefined }),
     [documentName]
@@ -159,86 +160,83 @@ export default function DocumentEditor() {
 
   const provider = useMemo(() => {
     if (!token || !documentName) return null;
+
     return new HocuspocusProvider({
       url: COLLAB_URL,
       name: documentName,
       document: ydoc,
       token,
+      onStatus: ({ status: nextStatus }) => {
+        setStatus(STATUS_LABELS[nextStatus] ?? "Disconnected");
+      },
+      onSynced: () => {
+        setStatus("Synced");
+        setSaveState("Saved");
+      },
+      onAuthenticationFailed: () => {
+        setStatus("Auth failed");
+      },
+      onAwarenessChange: ({ states }) => {
+        const next = new Map<string | number, Collaborator>();
+        states.forEach((state) => {
+          const userState = state.user as Collaborator | undefined;
+          if (!userState) return;
+          next.set(userState.id ?? userState.name, userState);
+        });
+        setCollaborators(Array.from(next.values()));
+      },
+      onStateless: ({ payload }) => {
+        if (!payload) return;
+        const decoded = decodeStatelessPayload(payload);
+        if (decoded === "saved") {
+          setSaveState("Saved");
+        }
+      },
     });
   }, [documentName, token, ydoc]);
 
   useEffect(() => {
     if (!provider) return;
-
-    const handleStatus = ({ status: nextStatus }: { status: string }) => {
-      setStatus(STATUS_LABELS[nextStatus] ?? "Disconnected");
-    };
-
-    const handleSynced = () => {
-      setStatus("Synced");
-      setSaveState("Saved");
-    };
-
-    const handleAuthFailed = () => {
-      setStatus("Auth failed");
-    };
-
-    const handleAwarenessChange = ({
-      states,
-    }: {
-      states: Array<Record<string, unknown>>;
-    }) => {
-      const next = new Map<string | number, Collaborator>();
-      states.forEach((state) => {
-        const userState = state.user as Collaborator | undefined;
-        if (!userState) return;
-        next.set(userState.id ?? userState.name, userState);
-      });
-      setCollaborators(Array.from(next.values()));
-    };
-
-    const handleOutgoingMessage = () => {
-      if (canEdit) {
-        setSaveState("Saving...");
-      }
-    };
-
-    const handleStateless = ({ payload }: { payload: string }) => {
-      if (!payload) return;
-      try {
-        const parsed = JSON.parse(payload) as { type?: string };
-        if (parsed?.type === "saved") {
-          setSaveState("Saved");
-        }
-      } catch {
-        if (payload === "saved") {
-          setSaveState("Saved");
-        }
-      }
-    };
-
-    provider.on("status", handleStatus);
-    provider.on("synced", handleSynced);
-    provider.on("authenticationFailed", handleAuthFailed);
-    provider.on("awarenessChange", handleAwarenessChange);
-    provider.on("outgoingMessage", handleOutgoingMessage);
-    provider.on("stateless", handleStateless);
-
     return () => {
-      provider.off("status", handleStatus);
-      provider.off("synced", handleSynced);
-      provider.off("authenticationFailed", handleAuthFailed);
-      provider.off("awarenessChange", handleAwarenessChange);
-      provider.off("outgoingMessage", handleOutgoingMessage);
-      provider.off("stateless", handleStateless);
       provider.destroy();
     };
-  }, [canEdit, provider]);
+  }, [provider]);
 
   useEffect(() => {
     if (!provider || !user) return;
     provider.setAwarenessField("user", user);
   }, [provider, user]);
+
+  useEffect(() => {
+    if (!provider || !canEdit) return;
+
+    const typedProvider = provider as unknown as {
+      on: (event: string, callback: (count: number) => void) => void;
+      off: (event: string, callback: (count: number) => void) => void;
+      hasUnsyncedChanges?: boolean;
+    };
+
+    const handleUnsynced = (count: number) => {
+      if (count > 0) {
+        dirtyRef.current = true;
+        setSaveState("Saving...");
+        return;
+      }
+      if (dirtyRef.current) {
+        dirtyRef.current = false;
+        setSaveState("Saved");
+      }
+    };
+
+    typedProvider.on("unsyncedChanges", handleUnsynced);
+    if (typeof typedProvider.hasUnsyncedChanges === "boolean") {
+      handleUnsynced(typedProvider.hasUnsyncedChanges ? 1 : 0);
+    }
+
+    return () => {
+      typedProvider.off("unsyncedChanges", handleUnsynced);
+    };
+  }, [canEdit, provider]);
 
   useEffect(() => {
     return () => {
@@ -280,6 +278,25 @@ export default function DocumentEditor() {
     if (!editor) return;
     editor.setEditable(canEdit);
   }, [editor, canEdit]);
+
+  useEffect(() => {
+    if (!editor || !canEdit) return;
+
+    const handleUpdate = ({
+      transaction,
+    }: {
+      transaction: { docChanged?: boolean };
+    }) => {
+      if (!transaction?.docChanged) return;
+      dirtyRef.current = true;
+      setSaveState("Saving...");
+    };
+
+    editor.on("update", handleUpdate);
+    return () => {
+      editor.off("update", handleUpdate);
+    };
+  }, [canEdit, editor]);
 
   if (loadError) {
     return (
@@ -377,4 +394,15 @@ function pickColor(seed: string) {
   }
   const index = Math.abs(hash) % COLOR_PALETTE.length;
   return COLOR_PALETTE[index];
+}
+
+function decodeStatelessPayload(payload: unknown) {
+  if (typeof payload === "string") return payload;
+  if (payload instanceof Uint8Array) {
+    return new TextDecoder().decode(payload);
+  }
+  if (payload instanceof ArrayBuffer) {
+    return new TextDecoder().decode(new Uint8Array(payload));
+  }
+  return null;
 }
