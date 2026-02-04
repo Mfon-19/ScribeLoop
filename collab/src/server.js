@@ -24,7 +24,7 @@ const JWT_SECRET = resolveJwtSecret();
 
 const pool = new Pool(resolveDatabaseConfig());
 
-const server = Server.configure({
+const server = new Server({
   port: PORT,
   async onAuthenticate(data) {
     const token = data.token;
@@ -72,6 +72,13 @@ const server = Server.configure({
   async onStoreDocument({ document, documentName }) {
     const update = Y.encodeStateAsUpdate(document);
     await storeDocument(documentName, update);
+    document.broadcastStateless(
+      JSON.stringify({
+        type: "saved",
+        documentName,
+        timestamp: Date.now(),
+      })
+    );
   },
 });
 

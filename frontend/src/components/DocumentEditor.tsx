@@ -68,6 +68,7 @@ export default function DocumentEditor() {
   });
   const [title, setTitle] = useState("Loading...");
   const [status, setStatus] = useState<StatusState>("Connecting...");
+  const [saveState, setSaveState] = useState<"Saving..." | "Saved">("Saved");
   const [canEdit, setCanEdit] = useState(true);
   const [accessRole, setAccessRole] = useState<AccessResponse["role"]>(
     "VIEWER"
@@ -175,6 +176,7 @@ export default function DocumentEditor() {
 
     const handleSynced = () => {
       setStatus("Synced");
+      setSaveState("Saved");
     };
 
     const handleAuthFailed = () => {
@@ -195,19 +197,43 @@ export default function DocumentEditor() {
       setCollaborators(Array.from(next.values()));
     };
 
+    const handleOutgoingMessage = () => {
+      if (canEdit) {
+        setSaveState("Saving...");
+      }
+    };
+
+    const handleStateless = ({ payload }: { payload: string }) => {
+      if (!payload) return;
+      try {
+        const parsed = JSON.parse(payload) as { type?: string };
+        if (parsed?.type === "saved") {
+          setSaveState("Saved");
+        }
+      } catch {
+        if (payload === "saved") {
+          setSaveState("Saved");
+        }
+      }
+    };
+
     provider.on("status", handleStatus);
     provider.on("synced", handleSynced);
     provider.on("authenticationFailed", handleAuthFailed);
     provider.on("awarenessChange", handleAwarenessChange);
+    provider.on("outgoingMessage", handleOutgoingMessage);
+    provider.on("stateless", handleStateless);
 
     return () => {
       provider.off("status", handleStatus);
       provider.off("synced", handleSynced);
       provider.off("authenticationFailed", handleAuthFailed);
       provider.off("awarenessChange", handleAwarenessChange);
+      provider.off("outgoingMessage", handleOutgoingMessage);
+      provider.off("stateless", handleStateless);
       provider.destroy();
     };
-  }, [provider]);
+  }, [canEdit, provider]);
 
   useEffect(() => {
     if (!provider || !user) return;
@@ -273,7 +299,10 @@ export default function DocumentEditor() {
           <h1 className="text-2xl font-semibold tracking-tight font-[family-name:var(--font-display)]">
             {title}
           </h1>
-          <p className="mt-1 text-xs text-[color:var(--muted)]">{status}</p>
+          <p className="mt-1 text-xs text-[color:var(--muted)]">
+            {status}
+            {canEdit ? ` · ${saveState}` : ""}
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <span className="rounded-full border border-[color:var(--surface-border)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em]">
