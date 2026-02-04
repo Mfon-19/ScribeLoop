@@ -2,9 +2,24 @@
 
 import Collaboration from "@tiptap/extension-collaboration";
 import CollaborationCaret from "@tiptap/extension-collaboration-caret";
+import Underline from "@tiptap/extension-underline";
 import StarterKit from "@tiptap/starter-kit";
-import { EditorContent, useEditor } from "@tiptap/react";
+import { EditorContent, useEditor, useEditorState } from "@tiptap/react";
 import { HocuspocusProvider } from "@hocuspocus/provider";
+import {
+  Bold,
+  Code,
+  Heading1,
+  Heading2,
+  Italic,
+  List,
+  ListOrdered,
+  Quote,
+  Redo2,
+  Strikethrough,
+  Underline as UnderlineIcon,
+  Undo2,
+} from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as Y from "yjs";
@@ -251,6 +266,7 @@ export default function DocumentEditor() {
         StarterKit.configure({
           history: false,
         }),
+        Underline,
         Collaboration.configure({
           document: ydoc,
         }),
@@ -273,6 +289,25 @@ export default function DocumentEditor() {
     },
     [ydoc, provider, user, canEdit]
   );
+
+  const toolbarState = useEditorState({
+    editor,
+    selector: ({ editor: current }) => ({
+      canUndo: current?.can().chain().focus().undo().run() ?? false,
+      canRedo: current?.can().chain().focus().redo().run() ?? false,
+      isBold: current?.isActive("bold") ?? false,
+      isItalic: current?.isActive("italic") ?? false,
+      isUnderline: current?.isActive("underline") ?? false,
+      isStrike: current?.isActive("strike") ?? false,
+      isHeading1: current?.isActive("heading", { level: 1 }) ?? false,
+      isHeading2: current?.isActive("heading", { level: 2 }) ?? false,
+      isQuote: current?.isActive("blockquote") ?? false,
+      isCode: current?.isActive("code") ?? false,
+      isCodeBlock: current?.isActive("codeBlock") ?? false,
+      isBulletList: current?.isActive("bulletList") ?? false,
+      isOrderedList: current?.isActive("orderedList") ?? false,
+    }),
+  });
 
   useEffect(() => {
     if (!editor) return;
@@ -335,6 +370,104 @@ export default function DocumentEditor() {
 
       <main className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-6 pb-24">
         <section className="rounded-3xl border border-[color:var(--surface-border)] bg-[color:var(--surface)] p-6 shadow-[0_20px_50px_rgba(23,23,23,0.08)]">
+          {editor ? (
+            <div className="mb-4 flex flex-wrap items-center gap-2 rounded-2xl border border-[color:var(--surface-border)] bg-[color:var(--accent-faint)] px-3 py-2 text-[color:var(--muted)]">
+              <ToolbarButton
+                label="Bold"
+                icon={Bold}
+                active={toolbarState.isBold}
+                disabled={!canEdit || !editor.can().chain().focus().toggleBold().run()}
+                onClick={() => editor.chain().focus().toggleBold().run()}
+              />
+              <ToolbarButton
+                label="Italic"
+                icon={Italic}
+                active={toolbarState.isItalic}
+                disabled={!canEdit || !editor.can().chain().focus().toggleItalic().run()}
+                onClick={() => editor.chain().focus().toggleItalic().run()}
+              />
+              <ToolbarButton
+                label="Underline"
+                icon={UnderlineIcon}
+                active={toolbarState.isUnderline}
+                disabled={!canEdit || !editor.can().chain().focus().toggleUnderline().run()}
+                onClick={() => editor.chain().focus().toggleUnderline().run()}
+              />
+              <ToolbarButton
+                label="Strike"
+                icon={Strikethrough}
+                active={toolbarState.isStrike}
+                disabled={!canEdit || !editor.can().chain().focus().toggleStrike().run()}
+                onClick={() => editor.chain().focus().toggleStrike().run()}
+              />
+              <ToolbarDivider />
+              <ToolbarButton
+                label="Heading 1"
+                icon={Heading1}
+                active={toolbarState.isHeading1}
+                disabled={!canEdit}
+                onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
+              />
+              <ToolbarButton
+                label="Heading 2"
+                icon={Heading2}
+                active={toolbarState.isHeading2}
+                disabled={!canEdit}
+                onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
+              />
+              <ToolbarButton
+                label="Quote"
+                icon={Quote}
+                active={toolbarState.isQuote}
+                disabled={!canEdit}
+                onClick={() => editor.chain().focus().toggleBlockquote().run()}
+              />
+              <ToolbarButton
+                label="Inline code"
+                icon={Code}
+                active={toolbarState.isCode}
+                disabled={!canEdit}
+                onClick={() => editor.chain().focus().toggleCode().run()}
+              />
+              <ToolbarButton
+                label="Code block"
+                icon={Code}
+                active={toolbarState.isCodeBlock}
+                disabled={!canEdit}
+                onClick={() => editor.chain().focus().toggleCodeBlock().run()}
+              />
+              <ToolbarDivider />
+              <ToolbarButton
+                label="Bullet list"
+                icon={List}
+                active={toolbarState.isBulletList}
+                disabled={!canEdit}
+                onClick={() => editor.chain().focus().toggleBulletList().run()}
+              />
+              <ToolbarButton
+                label="Numbered list"
+                icon={ListOrdered}
+                active={toolbarState.isOrderedList}
+                disabled={!canEdit}
+                onClick={() => editor.chain().focus().toggleOrderedList().run()}
+              />
+              <ToolbarDivider />
+              <ToolbarButton
+                label="Undo"
+                icon={Undo2}
+                active={false}
+                disabled={!canEdit || !toolbarState.canUndo}
+                onClick={() => editor.chain().focus().undo().run()}
+              />
+              <ToolbarButton
+                label="Redo"
+                icon={Redo2}
+                active={false}
+                disabled={!canEdit || !toolbarState.canRedo}
+                onClick={() => editor.chain().focus().redo().run()}
+              />
+            </div>
+          ) : null}
           {editor ? (
             <EditorContent editor={editor} />
           ) : (
@@ -405,4 +538,40 @@ function decodeStatelessPayload(payload: unknown) {
     return new TextDecoder().decode(new Uint8Array(payload));
   }
   return null;
+}
+
+function ToolbarButton({
+  label,
+  icon: Icon,
+  active,
+  disabled,
+  onClick,
+}: {
+  label: string;
+  icon: typeof Bold;
+  active: boolean;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-pressed={active}
+      aria-label={label}
+      title={label}
+      className={`rounded-full border px-2.5 py-2 text-[0.65rem] font-semibold uppercase tracking-[0.18em] transition ${
+        active
+          ? "border-[color:var(--accent)] bg-white text-[color:var(--accent-strong)]"
+          : "border-transparent text-[color:var(--muted)] hover:border-[color:var(--surface-border)] hover:text-[color:var(--foreground)]"
+      } ${disabled ? "cursor-not-allowed opacity-50" : ""}`}
+    >
+      <Icon className="h-4 w-4" />
+    </button>
+  );
+}
+
+function ToolbarDivider() {
+  return <span className="h-6 w-px bg-[color:var(--surface-border)]" />;
 }
