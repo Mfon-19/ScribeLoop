@@ -28,3 +28,49 @@ body {
   font-family: var(--font-body), system-ui, sans-serif;
   color-scheme: light;
 }
+
+.ProseMirror {
+  outline: none;
+}
+
+.ProseMirror p + p {
+  margin-top: 0.75rem;
+}
+
+.ProseMirror h1,
+.ProseMirror h2,
+.ProseMirror h3 {
+  font-family: var(--font-display), serif;
+  margin-top: 1.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.ProseMirror h1 {
+  font-size: 1.75rem;
+}
+
+.ProseMirror h2 {
+  font-size: 1.4rem;
+}
+
+.ProseMirror h3 {
+  font-size: 1.1rem;
+}
+
+.ProseMirror ul,
+.ProseMirror ol {
+  padding-left: 1.5rem;
+  margin-top: 0.75rem;
+}
+
+.ProseMirror li + li {
+  margin-top: 0.35rem;
+}
+
+.ProseMirror code {
+  background: var(--accent-faint);
+  border-radius: 0.4rem;
+  padding: 0.1rem 0.35rem;
+  font-family: var(--font-mono), ui-monospace, SFMono-Regular, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.9em;
+}

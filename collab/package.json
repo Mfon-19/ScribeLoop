@@ -1,0 +1,16 @@
+{
+  "name": "scribeloop-collab",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node src/server.js",
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "@hocuspocus/server": "3.4.4",
+    "dotenv": "16.4.7",
+    "jsonwebtoken": "9.0.3",
+    "pg": "8.18.0",
+    "yjs": "13.6.29"
+  }
+}

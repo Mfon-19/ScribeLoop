@@ -1,7 +1,13 @@
 "use client";
 
+import Collaboration from "@tiptap/extension-collaboration";
+import CollaborationCaret from "@tiptap/extension-collaboration-caret";
+import StarterKit from "@tiptap/starter-kit";
+import { EditorContent, useEditor } from "@tiptap/react";
+import { HocuspocusProvider } from "@hocuspocus/provider";
 import { useParams, useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import * as Y from "yjs";
 
 type DocumentResponse = {
   id: number;
@@ -14,36 +20,35 @@ type AccessResponse = {
   canEdit: boolean;
 };
 
-type SyncResponse = {
-  currentRev: number;
-  snapshotRev: number;
-  snapshotJson: string;
-  ops: OperationItem[];
+type Collaborator = {
+  id: number | string;
+  name: string;
+  color: string;
 };
 
-type OperationItem = {
-  rev: number;
-  baseRev: number;
-  opJson: string;
-  actorId: number;
-  actorEmail: string;
-  createdAt: string;
-};
-
-type PresenceState = {
-  actorId: number;
-  actorEmail: string;
-  cursor?: { start?: number; end?: number };
-  selection?: { start?: number; end?: number };
-  lastSeen: number;
-};
+type StatusState = "Connecting..." | "Connected" | "Synced" | "Disconnected" | "Auth failed";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
-const WS_BASE_URL =
-  process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8080/ws";
+const COLLAB_URL =
+  process.env.NEXT_PUBLIC_COLLAB_URL ?? "ws://localhost:1234";
 
-const EMPTY_SNAPSHOT = { text: "" };
+const COLOR_PALETTE = [
+  "#FF7A1A",
+  "#2F6BFF",
+  "#00A676",
+  "#D64550",
+  "#8E5CD4",
+  "#F4B400",
+  "#0088A9",
+  "#E056A7",
+];
+
+const STATUS_LABELS: Record<string, StatusState> = {
+  connecting: "Connecting...",
+  connected: "Connected",
+  disconnected: "Disconnected",
+};
 
 export default function DocumentEditor() {
   const params = useParams();
@@ -52,303 +57,205 @@ export default function DocumentEditor() {
     () => Number(params?.documentId ?? 0),
     [params]
   );
-
-  const [title, setTitle] = useState("Loading...");
-  const [content, setContent] = useState("");
-  const [rev, setRev] = useState(0);
-  const [status, setStatus] = useState("Connecting...");
-  const [canEdit, setCanEdit] = useState(true);
-  const [accessRole, setAccessRole] = useState<AccessResponse["role"]>("VIEWER");
-  const [presence, setPresence] = useState<Record<string, PresenceState>>({});
-
-  const wsRef = useRef<WebSocket | null>(null);
-  const pendingRef = useRef(false);
-  const dirtyRef = useRef(false);
-  const contentRef = useRef("");
-  const revRef = useRef(0);
-  const userIdRef = useRef<number | null>(null);
-
-  const applySync = useCallback((data: SyncResponse) => {
-    const snapshotText = extractSnapshotText(data.snapshotJson);
-    let nextText = snapshotText;
-    data.ops?.forEach((op) => {
-      nextText = applyOpJson(nextText, op.opJson);
-    });
-    setContent(nextText);
-    setRev(data.currentRev);
-    pendingRef.current = false;
-    dirtyRef.current = false;
-    setStatus("Synced");
-  }, []);
-
-  const applyOperation = useCallback((nextRev: number, opJson: string) => {
-    setContent((current) => applyOpJson(current, opJson));
-    setRev(nextRev);
-  }, []);
-
-  const sendOperation = useCallback(() => {
-    const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      return;
-    }
-    const opJson = JSON.stringify({
-      type: "replace",
-      text: contentRef.current,
-    });
-    const snapshotJson = JSON.stringify({
-      text: contentRef.current,
-    });
-
-    ws.send(
-      JSON.stringify({
-        type: "op",
-        docId: documentId,
-        baseRev: revRef.current,
-        opJson,
-        snapshotJson,
-      })
-    );
-    pendingRef.current = true;
-    dirtyRef.current = false;
-  }, [documentId]);
-
-  const sendPresence = useCallback(
-    (cursor: { start?: number; end?: number }) => {
-      const ws = wsRef.current;
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
-        return;
-      }
-      ws.send(
-        JSON.stringify({
-          type: "presence",
-          docId: documentId,
-          cursor,
-        })
-      );
-    },
+  const documentName = useMemo(
+    () => (documentId ? `document:${documentId}` : null),
     [documentId]
   );
 
-  const fetchDocument = useCallback(
-    async (token: string, docId: number) => {
-      const response = await fetch(`${API_BASE_URL}/documents/${docId}`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-      if (response.status === 401) {
+  const [token] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    return localStorage.getItem("scribeloop_token");
+  });
+  const [title, setTitle] = useState("Loading...");
+  const [status, setStatus] = useState<StatusState>("Connecting...");
+  const [canEdit, setCanEdit] = useState(true);
+  const [accessRole, setAccessRole] = useState<AccessResponse["role"]>(
+    "VIEWER"
+  );
+  const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const ydoc = useMemo(
+    () => new Y.Doc({ guid: documentName ?? undefined }),
+    [documentName]
+  );
+
+  const user = useMemo(() => {
+    if (!token) return null;
+    const claims = decodeJwt(token);
+    const name = claims?.sub ?? "Collaborator";
+    const id = claims?.uid ?? name;
+    return {
+      id,
+      name,
+      color: pickColor(String(id)),
+    };
+  }, [token]);
+
+  const loadMetadata = useCallback(
+    async (authToken: string, docId: number) => {
+      const [docResponse, accessResponse] = await Promise.all([
+        fetch(`${API_BASE_URL}/documents/${docId}`, {
+          headers: { Authorization: `Bearer ${authToken}` },
+        }),
+        fetch(`${API_BASE_URL}/documents/${docId}/access`, {
+          headers: { Authorization: `Bearer ${authToken}` },
+        }),
+      ]);
+
+      if (docResponse.status === 401 || accessResponse.status === 401) {
         router.push("/auth");
         return;
       }
-      if (!response.ok) {
-        setStatus("Failed to load document.");
-        return;
+
+      if (!docResponse.ok) {
+        throw new Error("Unable to load document.");
       }
-      const data = (await response.json()) as DocumentResponse;
-      setTitle(data.title);
-      setRev(data.currentRev ?? 0);
+
+      const docData = (await docResponse.json()) as DocumentResponse;
+      setTitle(docData.title);
+
+      if (accessResponse.ok) {
+        const accessData = (await accessResponse.json()) as AccessResponse;
+        setCanEdit(accessData.canEdit);
+        setAccessRole(accessData.role);
+      }
     },
     [router]
   );
 
-  const fetchAccess = useCallback(async (token: string, docId: number) => {
-    const response = await fetch(`${API_BASE_URL}/documents/${docId}/access`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
-    if (!response.ok) {
-      return;
-    }
-    const data = (await response.json()) as AccessResponse;
-    setCanEdit(data.canEdit);
-    setAccessRole(data.role);
-  }, []);
-
-  const fetchSync = useCallback(
-    async (token: string, docId: number) => {
-      const response = await fetch(
-        `${API_BASE_URL}/documents/${docId}/sync?sinceRev=0`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
-      if (!response.ok) {
-        return;
-      }
-      const data = (await response.json()) as SyncResponse;
-      applySync(data);
-    },
-    [applySync]
-  );
-
-  const connectWebSocket = useCallback(
-    (token: string, docId: number) => {
-      const ws = new WebSocket(
-        `${WS_BASE_URL}?token=${encodeURIComponent(token)}`
-      );
-
-      ws.onopen = () => {
-        setStatus("Connected");
-        ws.send(
-          JSON.stringify({
-            type: "join",
-            docId,
-            lastRev: revRef.current,
-          })
-        );
-      };
-
-      ws.onclose = () => {
-        setStatus("Disconnected");
-      };
-
-      ws.onerror = () => {
-        setStatus("Connection error");
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const message = JSON.parse(event.data) as Record<string, unknown>;
-          const type = message.type as string | undefined;
-          if (!type) return;
-
-          if (type === "sync") {
-            applySync(message as unknown as SyncResponse);
-            return;
-          }
-
-          if (type === "op") {
-            const opMessage = message as unknown as {
-              rev: number;
-              opJson: string;
-              actorId: number;
-            };
-            applyOperation(opMessage.rev, opMessage.opJson);
-            if (userIdRef.current && opMessage.actorId === userIdRef.current) {
-              pendingRef.current = false;
-            }
-            return;
-          }
-
-          if (type === "presence") {
-            const presenceMessage = message as unknown as PresenceState & {
-              actorId: number;
-              actorEmail: string;
-              cursor?: { start?: number; end?: number };
-            };
-            setPresence((prev) => ({
-              ...prev,
-              [presenceMessage.actorId]: {
-                actorId: presenceMessage.actorId,
-                actorEmail: presenceMessage.actorEmail,
-                cursor: presenceMessage.cursor,
-                selection: presenceMessage.selection,
-                lastSeen: Date.now(),
-              },
-            }));
-            return;
-          }
-        } catch {
-          setStatus("Message parse error");
-        }
-      };
-
-      return ws;
-    },
-    [applyOperation, applySync]
-  );
-
-  function handleChange(value: string) {
-    if (!canEdit) return;
-    setContent(value);
-    dirtyRef.current = true;
-  }
-
-  function handlePresence(event: React.SyntheticEvent<HTMLTextAreaElement>) {
-    const target = event.currentTarget;
-    const cursor = {
-      start: target.selectionStart ?? undefined,
-      end: target.selectionEnd ?? undefined,
-    };
-    sendPresence(cursor);
-  }
-
-  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
-    contentRef.current = content;
-  }, [content]);
-
-  useEffect(() => {
-    revRef.current = rev;
-  }, [rev]);
-
-  useEffect(() => {
-    if (!documentId) return;
-    const token = localStorage.getItem("scribeloop_token");
     if (!token) {
       router.push("/auth");
-      return;
     }
+  }, [router, token]);
 
-    const claims = decodeJwt(token);
-    if (claims?.uid) {
-      userIdRef.current = claims.uid;
-    }
+  useEffect(() => {
+    if (!token || !documentId || !documentName) return;
+    let active = true;
 
-    void fetchDocument(token, documentId);
-    void fetchAccess(token, documentId);
-    void fetchSync(token, documentId);
+    const run = async () => {
+      try {
+        await loadMetadata(token, documentId);
+      } catch (error) {
+        if (!active) return;
+        setLoadError(
+          error instanceof Error ? error.message : "Unable to load document."
+        );
+      }
+    };
 
-    const ws = connectWebSocket(token, documentId);
-    wsRef.current = ws;
+    void run();
 
     return () => {
-      ws.close();
+      active = false;
     };
-  }, [
-    connectWebSocket,
-    documentId,
-    fetchAccess,
-    fetchDocument,
-    fetchSync,
-    router,
-  ]);
-  /* eslint-enable react-hooks/set-state-in-effect */
+  }, [documentId, documentName, loadMetadata, token]);
+
+  const provider = useMemo(() => {
+    if (!token || !documentName) return null;
+    return new HocuspocusProvider({
+      url: COLLAB_URL,
+      name: documentName,
+      document: ydoc,
+      token,
+    });
+  }, [documentName, token, ydoc]);
 
   useEffect(() => {
-    const interval = window.setInterval(() => {
-      const now = Date.now();
-      setPresence((prev) => {
-        const updated: Record<string, PresenceState> = {};
-        Object.values(prev).forEach((item) => {
-          if (now - item.lastSeen < 20000) {
-            updated[item.actorId] = item;
-          }
-        });
-        return updated;
+    if (!provider) return;
+
+    const handleStatus = ({ status: nextStatus }: { status: string }) => {
+      setStatus(STATUS_LABELS[nextStatus] ?? "Disconnected");
+    };
+
+    const handleSynced = () => {
+      setStatus("Synced");
+    };
+
+    const handleAuthFailed = () => {
+      setStatus("Auth failed");
+    };
+
+    const handleAwarenessChange = ({
+      states,
+    }: {
+      states: Array<Record<string, unknown>>;
+    }) => {
+      const next = new Map<string | number, Collaborator>();
+      states.forEach((state) => {
+        const userState = state.user as Collaborator | undefined;
+        if (!userState) return;
+        next.set(userState.id ?? userState.name, userState);
       });
-    }, 5000);
+      setCollaborators(Array.from(next.values()));
+    };
 
-    return () => window.clearInterval(interval);
-  }, []);
+    provider.on("status", handleStatus);
+    provider.on("synced", handleSynced);
+    provider.on("authenticationFailed", handleAuthFailed);
+    provider.on("awarenessChange", handleAwarenessChange);
+
+    return () => {
+      provider.off("status", handleStatus);
+      provider.off("synced", handleSynced);
+      provider.off("authenticationFailed", handleAuthFailed);
+      provider.off("awarenessChange", handleAwarenessChange);
+      provider.destroy();
+    };
+  }, [provider]);
 
   useEffect(() => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      return;
-    }
-    if (!dirtyRef.current || pendingRef.current) {
-      return;
-    }
+    if (!provider || !user) return;
+    provider.setAwarenessField("user", user);
+  }, [provider, user]);
 
-    const timeout = window.setTimeout(() => {
-      sendOperation();
-    }, 350);
+  useEffect(() => {
+    return () => {
+      ydoc.destroy();
+    };
+  }, [ydoc]);
 
-    return () => window.clearTimeout(timeout);
-  }, [content, rev, sendOperation]);
+  const editor = useEditor(
+    {
+      extensions: [
+        StarterKit.configure({
+          history: false,
+        }),
+        Collaboration.configure({
+          document: ydoc,
+        }),
+        ...(provider && user
+          ? [
+              CollaborationCaret.configure({
+                provider,
+                user,
+              }),
+            ]
+          : []),
+      ],
+      editorProps: {
+        attributes: {
+          class:
+            "min-h-[420px] w-full rounded-2xl border border-[color:var(--surface-border)] bg-white p-4 text-sm leading-6 outline-none",
+        },
+      },
+      editable: canEdit,
+    },
+    [ydoc, provider, user, canEdit]
+  );
+
+  useEffect(() => {
+    if (!editor) return;
+    editor.setEditable(canEdit);
+  }, [editor, canEdit]);
+
+  if (loadError) {
+    return (
+      <div className="rounded-3xl border border-red-200 bg-red-50 p-6 text-sm text-red-700">
+        {loadError}
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen">
@@ -360,9 +267,7 @@ export default function DocumentEditor() {
           <h1 className="text-2xl font-semibold tracking-tight font-[family-name:var(--font-display)]">
             {title}
           </h1>
-          <p className="mt-1 text-xs text-[color:var(--muted)]">
-            Rev {rev} · {status}
-          </p>
+          <p className="mt-1 text-xs text-[color:var(--muted)]">{status}</p>
         </div>
         <div className="flex items-center gap-2">
           <span className="rounded-full border border-[color:var(--surface-border)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em]">
@@ -378,16 +283,13 @@ export default function DocumentEditor() {
 
       <main className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-6 pb-24">
         <section className="rounded-3xl border border-[color:var(--surface-border)] bg-[color:var(--surface)] p-6 shadow-[0_20px_50px_rgba(23,23,23,0.08)]">
-          <textarea
-            value={content}
-            onChange={(event) => handleChange(event.target.value)}
-            onSelect={handlePresence}
-            onKeyUp={handlePresence}
-            onMouseUp={handlePresence}
-            disabled={!canEdit}
-            className="h-[420px] w-full resize-none rounded-2xl border border-[color:var(--surface-border)] bg-white p-4 text-sm leading-6"
-            placeholder="Start writing your notes..."
-          />
+          {editor ? (
+            <EditorContent editor={editor} />
+          ) : (
+            <div className="text-sm text-[color:var(--muted)]">
+              Loading editor...
+            </div>
+          )}
         </section>
 
         <section className="rounded-3xl border border-[color:var(--surface-border)] bg-[color:var(--surface)] p-6 shadow-[0_12px_32px_rgba(23,23,23,0.08)]">
@@ -395,17 +297,21 @@ export default function DocumentEditor() {
             Active collaborators
           </h2>
           <div className="mt-4 flex flex-wrap gap-3">
-            {Object.values(presence).length === 0 ? (
+            {collaborators.length === 0 ? (
               <p className="text-sm text-[color:var(--muted)]">
                 No active cursors yet.
               </p>
             ) : (
-              Object.values(presence).map((member) => (
+              collaborators.map((member) => (
                 <div
-                  key={member.actorId}
-                  className="rounded-full border border-[color:var(--surface-border)] px-4 py-2 text-xs font-semibold"
+                  key={member.id}
+                  className="flex items-center gap-2 rounded-full border border-[color:var(--surface-border)] px-4 py-2 text-xs font-semibold"
                 >
-                  {member.actorEmail}
+                  <span
+                    className="h-2.5 w-2.5 rounded-full"
+                    style={{ backgroundColor: member.color }}
+                  />
+                  {member.name}
                 </div>
               ))
             )}
@@ -414,33 +320,6 @@ export default function DocumentEditor() {
       </main>
     </div>
   );
-}
-
-function extractSnapshotText(snapshotJson?: string) {
-  if (!snapshotJson) {
-    return EMPTY_SNAPSHOT.text;
-  }
-  try {
-    const parsed = JSON.parse(snapshotJson) as { text?: string };
-    if (typeof parsed?.text === "string") {
-      return parsed.text;
-    }
-  } catch {
-    return snapshotJson;
-  }
-  return EMPTY_SNAPSHOT.text;
-}
-
-function applyOpJson(current: string, opJson: string) {
-  try {
-    const parsed = JSON.parse(opJson) as { type?: string; text?: string };
-    if (parsed?.type === "replace" && typeof parsed.text === "string") {
-      return parsed.text;
-    }
-  } catch {
-    return current;
-  }
-  return current;
 }
 
 function decodeJwt(token: string): { uid?: number; sub?: string } | null {
@@ -453,4 +332,14 @@ function decodeJwt(token: string): { uid?: number; sub?: string } | null {
   } catch {
     return null;
   }
+}
+
+function pickColor(seed: string) {
+  let hash = 0;
+  for (let i = 0; i < seed.length; i += 1) {
+    hash = (hash << 5) - hash + seed.charCodeAt(i);
+    hash |= 0;
+  }
+  const index = Math.abs(hash) % COLOR_PALETTE.length;
+  return COLOR_PALETTE[index];
 }
