@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type Course = {
   id: number;
@@ -32,13 +32,55 @@ const API_BASE_URL =
 
 export default function HomeDashboard() {
   const router = useRouter();
+  const tokenRef = useRef<string | null>(null);
   const [state, setState] = useState<LoadState>({
     loading: true,
     error: null,
     courses: [],
   });
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createTitle, setCreateTitle] = useState("");
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [createLoading, setCreateLoading] = useState(false);
 
   const hasCourses = useMemo(() => state.courses.length > 0, [state.courses]);
+
+  const loadCourses = useCallback(async (token: string) => {
+    const courseResponse = await fetch(`${API_BASE_URL}/courses`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (courseResponse.status === 401) {
+      router.push("/auth");
+      return [];
+    }
+
+    if (!courseResponse.ok) {
+      throw new Error("Unable to load courses.");
+    }
+
+    const courses = (await courseResponse.json()) as Course[];
+    const docsByCourse = await Promise.all(
+      courses.map(async (course) => {
+        const docResponse = await fetch(
+          `${API_BASE_URL}/courses/${course.id}/documents`,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          }
+        );
+        const documents = docResponse.ok
+          ? ((await docResponse.json()) as Document[])
+          : [];
+        return { ...course, documents };
+      })
+    );
+
+    return docsByCourse;
+  }, [router]);
 
   useEffect(() => {
     const token = localStorage.getItem("scribeloop_token");
@@ -46,46 +88,16 @@ export default function HomeDashboard() {
       router.push("/auth");
       return;
     }
+    tokenRef.current = token;
 
     let active = true;
+    setState((prev) => ({ ...prev, loading: true, error: null }));
 
     const load = async () => {
       try {
-        const courseResponse = await fetch(`${API_BASE_URL}/courses`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
-
-        if (courseResponse.status === 401) {
-          router.push("/auth");
-          return;
-        }
-
-        if (!courseResponse.ok) {
-          throw new Error("Unable to load courses.");
-        }
-
-        const courses = (await courseResponse.json()) as Course[];
-        const docsByCourse = await Promise.all(
-          courses.map(async (course) => {
-            const docResponse = await fetch(
-              `${API_BASE_URL}/courses/${course.id}/documents`,
-              {
-                headers: {
-                  Authorization: `Bearer ${token}`,
-                },
-              }
-            );
-            const documents = docResponse.ok
-              ? ((await docResponse.json()) as Document[])
-              : [];
-            return { ...course, documents };
-          })
-        );
-
+        const courses = await loadCourses(token);
         if (!active) return;
-        setState({ loading: false, error: null, courses: docsByCourse });
+        setState({ loading: false, error: null, courses });
       } catch (err) {
         if (!active) return;
         setState({
@@ -101,7 +113,60 @@ export default function HomeDashboard() {
     return () => {
       active = false;
     };
-  }, [router]);
+  }, [loadCourses, router]);
+
+  const handleCreateCourse = async (
+    event: React.FormEvent<HTMLFormElement>
+  ) => {
+    event.preventDefault();
+    const token = tokenRef.current;
+    if (!token) {
+      router.push("/auth");
+      return;
+    }
+
+    if (!createTitle.trim()) {
+      setCreateError("Course title is required.");
+      return;
+    }
+
+    setCreateLoading(true);
+    setCreateError(null);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/courses`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ title: createTitle.trim() }),
+      });
+
+      if (response.status === 401) {
+        router.push("/auth");
+        return;
+      }
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as
+          | { message?: string }
+          | null;
+        throw new Error(payload?.message ?? "Unable to create course.");
+      }
+
+      setCreateTitle("");
+      setCreateOpen(false);
+      const courses = await loadCourses(token);
+      setState({ loading: false, error: null, courses });
+    } catch (err) {
+      setCreateError(
+        err instanceof Error ? err.message : "Unable to create course."
+      );
+    } finally {
+      setCreateLoading(false);
+    }
+  };
 
   if (state.loading) {
     return (
@@ -128,15 +193,107 @@ export default function HomeDashboard() {
         <p className="mt-2 text-sm text-[color:var(--muted)]">
           Create your first course to start organizing weekly notes.
         </p>
-        <button className="mt-4 rounded-full bg-[color:var(--accent)] px-5 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white">
-          Create course
-        </button>
+        {!createOpen ? (
+          <button
+            onClick={() => setCreateOpen(true)}
+            className="mt-4 rounded-full bg-[color:var(--accent)] px-5 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white"
+          >
+            Create course
+          </button>
+        ) : (
+          <form
+            onSubmit={handleCreateCourse}
+            className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center"
+          >
+            <input
+              value={createTitle}
+              onChange={(event) => setCreateTitle(event.target.value)}
+              className="w-full rounded-full border border-[color:var(--surface-border)] bg-white px-4 py-2 text-sm"
+              placeholder="Course title"
+            />
+            <button
+              type="submit"
+              disabled={createLoading}
+              className="rounded-full bg-[color:var(--accent)] px-5 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white disabled:opacity-70"
+            >
+              {createLoading ? "Saving..." : "Save"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setCreateOpen(false);
+                setCreateError(null);
+                setCreateTitle("");
+              }}
+              className="rounded-full border border-[color:var(--surface-border)] px-5 py-2 text-xs font-semibold uppercase tracking-[0.2em]"
+            >
+              Cancel
+            </button>
+          </form>
+        )}
+        {createError ? (
+          <p className="mt-3 text-sm text-red-600">{createError}</p>
+        ) : null}
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
+      <section className="rounded-3xl border border-[color:var(--surface-border)] bg-[color:var(--surface)] p-6 shadow-[0_12px_32px_rgba(23,23,23,0.08)]">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--muted)]">
+              Courses
+            </p>
+            <h2 className="text-xl font-semibold tracking-tight font-[family-name:var(--font-display)]">
+              Keep your classes organized.
+            </h2>
+          </div>
+          <button
+            onClick={() => setCreateOpen((prev) => !prev)}
+            className="rounded-full bg-[color:var(--accent)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white"
+          >
+            {createOpen ? "Close" : "New course"}
+          </button>
+        </div>
+
+        {createOpen ? (
+          <form
+            onSubmit={handleCreateCourse}
+            className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center"
+          >
+            <input
+              value={createTitle}
+              onChange={(event) => setCreateTitle(event.target.value)}
+              className="w-full rounded-full border border-[color:var(--surface-border)] bg-white px-4 py-2 text-sm"
+              placeholder="Course title"
+            />
+            <button
+              type="submit"
+              disabled={createLoading}
+              className="rounded-full bg-[color:var(--accent)] px-5 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white disabled:opacity-70"
+            >
+              {createLoading ? "Saving..." : "Create"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setCreateOpen(false);
+                setCreateError(null);
+                setCreateTitle("");
+              }}
+              className="rounded-full border border-[color:var(--surface-border)] px-5 py-2 text-xs font-semibold uppercase tracking-[0.2em]"
+            >
+              Cancel
+            </button>
+          </form>
+        ) : null}
+
+        {createError ? (
+          <p className="mt-3 text-sm text-red-600">{createError}</p>
+        ) : null}
+      </section>
       {state.courses.map((course) => (
         <section
           key={course.id}
