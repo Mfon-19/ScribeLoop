@@ -68,6 +68,42 @@ const STATUS_LABELS: Record<string, StatusState> = {
   disconnected: "Disconnected",
 };
 
+const COLLAB_PROFILE_ENABLED = false;
+const PROFILE_SAMPLE_LIMIT = 200;
+const PROFILE_LOG_EVERY = 1;
+const PROFILE_MAX_LATENCY_MS = 5000;
+const PROFILE_MAX_RECONNECT_MS = 60000;
+
+type AwarenessChange = {
+  added: number[];
+  updated: number[];
+  removed: number[];
+};
+
+type ProfileSummary = {
+  count: number;
+  p50: number;
+  p95: number;
+  min: number;
+  max: number;
+};
+
+const summarizeSamples = (samples: number[]): ProfileSummary | null => {
+  if (samples.length === 0) return null;
+  const sorted = [...samples].sort((a, b) => a - b);
+  const pick = (percentile: number) => {
+    const index = Math.floor((sorted.length - 1) * percentile);
+    return sorted[Math.min(Math.max(index, 0), sorted.length - 1)];
+  };
+  return {
+    count: sorted.length,
+    p50: pick(0.5),
+    p95: pick(0.95),
+    min: sorted[0],
+    max: sorted[sorted.length - 1],
+  };
+};
+
 export default function DocumentEditor() {
   const params = useParams();
   const router = useRouter();
@@ -100,10 +136,40 @@ export default function DocumentEditor() {
   const [shareListLoading, setShareListLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const dirtyRef = useRef(false);
+  const profileRef = useRef({
+    latencySamples: [] as number[],
+    reconnectSamples: [] as number[],
+    lastDisconnectedAt: null as number | null,
+    latencyLoggedCount: 0,
+    reconnectLoggedCount: 0,
+    hasLoggedStart: false,
+  });
   const ydoc = useMemo(
     () => new Y.Doc({ guid: documentName ?? undefined }),
     [documentName]
   );
+
+  const logProfileSummary = useCallback((kind: "latency" | "reconnect") => {
+    const ref = profileRef.current;
+    const samples =
+      kind === "latency" ? ref.latencySamples : ref.reconnectSamples;
+    const lastLoggedKey =
+      kind === "latency" ? "latencyLoggedCount" : "reconnectLoggedCount";
+    if (samples.length - ref[lastLoggedKey] < PROFILE_LOG_EVERY) return;
+    ref[lastLoggedKey] = samples.length;
+    const summary = summarizeSamples(samples);
+    if (!summary) return;
+    console.info(
+      `[Collab Profile] ${kind} p50=${summary.p50}ms p95=${summary.p95}ms (n=${summary.count})`
+    );
+  }, []);
+
+  useEffect(() => {
+    if (!COLLAB_PROFILE_ENABLED) return;
+    if (profileRef.current.hasLoggedStart) return;
+    profileRef.current.hasLoggedStart = true;
+    console.info("[Collab Profile] enabled");
+  }, []);
 
   const user = useMemo(() => {
     if (!token) return null;
@@ -381,10 +447,28 @@ export default function DocumentEditor() {
       token,
       onStatus: ({ status: nextStatus }) => {
         setStatus(STATUS_LABELS[nextStatus] ?? "Disconnected");
+        if (COLLAB_PROFILE_ENABLED && nextStatus === "disconnected") {
+          profileRef.current.lastDisconnectedAt = Date.now();
+        }
       },
       onSynced: () => {
         setStatus("Synced");
         setSaveState("Saved");
+        if (
+          COLLAB_PROFILE_ENABLED &&
+          profileRef.current.lastDisconnectedAt !== null
+        ) {
+          const delta = Date.now() - profileRef.current.lastDisconnectedAt;
+          profileRef.current.lastDisconnectedAt = null;
+          if (delta > 0 && delta < PROFILE_MAX_RECONNECT_MS) {
+            const samples = profileRef.current.reconnectSamples;
+            samples.push(delta);
+            if (samples.length > PROFILE_SAMPLE_LIMIT) {
+              samples.shift();
+            }
+            logProfileSummary("reconnect");
+          }
+        }
       },
       onAuthenticationFailed: () => {
         setStatus("Auth failed");
@@ -397,56 +481,7 @@ export default function DocumentEditor() {
         }
       },
     });
-  }, [documentName, token, ydoc]);
-
-  useEffect(() => {
-    if (!provider) return;
-    return () => {
-      provider.destroy();
-    };
-  }, [provider]);
-
-  useEffect(() => {
-    if (!provider || !user) return;
-    provider.setAwarenessField("user", user);
-  }, [provider, user]);
-
-  useEffect(() => {
-    if (!provider || !canEdit) return;
-
-    const typedProvider = provider as unknown as {
-      on: (event: string, callback: (count: number) => void) => void;
-      off: (event: string, callback: (count: number) => void) => void;
-      hasUnsyncedChanges?: boolean;
-    };
-
-    const handleUnsynced = (count: number) => {
-      if (count > 0) {
-        dirtyRef.current = true;
-        setSaveState("Saving...");
-        return;
-      }
-      if (dirtyRef.current) {
-        dirtyRef.current = false;
-        setSaveState("Saved");
-      }
-    };
-
-    typedProvider.on("unsyncedChanges", handleUnsynced);
-    if (typeof typedProvider.hasUnsyncedChanges === "boolean") {
-      handleUnsynced(typedProvider.hasUnsyncedChanges ? 1 : 0);
-    }
-
-    return () => {
-      typedProvider.off("unsyncedChanges", handleUnsynced);
-    };
-  }, [canEdit, provider]);
-
-  useEffect(() => {
-    return () => {
-      ydoc.destroy();
-    };
-  }, [ydoc]);
+  }, [documentName, logProfileSummary, token, ydoc]);
 
   const editor = useEditor(
     {
@@ -487,6 +522,124 @@ export default function DocumentEditor() {
     },
     [ydoc, provider, user, canEdit]
   );
+
+  useEffect(() => {
+    if (!provider) return;
+    return () => {
+      provider.destroy();
+    };
+  }, [provider]);
+
+  useEffect(() => {
+    if (!provider || !user) return;
+    provider.setAwarenessField("user", user);
+  }, [provider, user]);
+
+  useEffect(() => {
+    if (!COLLAB_PROFILE_ENABLED || !provider) return;
+    const awareness = provider.awareness;
+    if (!awareness) return;
+
+    const handleAwarenessChange = ({ added, updated }: AwarenessChange) => {
+      const localId = awareness.clientID;
+      const states = awareness.getStates();
+      [...added, ...updated].forEach((clientId) => {
+        if (clientId === localId) return;
+        const state = states.get(clientId) as { lastEditTs?: number } | undefined;
+        if (!state?.lastEditTs) return;
+        const delta = Date.now() - state.lastEditTs;
+        if (delta < 0 || delta > PROFILE_MAX_LATENCY_MS) return;
+        const samples = profileRef.current.latencySamples;
+        samples.push(delta);
+        if (samples.length > PROFILE_SAMPLE_LIMIT) {
+          samples.shift();
+        }
+        logProfileSummary("latency");
+      });
+    };
+
+    awareness.on("change", handleAwarenessChange);
+    return () => {
+      awareness.off("change", handleAwarenessChange);
+    };
+  }, [logProfileSummary, provider]);
+
+  useEffect(() => {
+    if (!COLLAB_PROFILE_ENABLED || !provider || !editor) return;
+    const awareness = provider.awareness;
+    if (!awareness) return;
+
+    const handleKeydown = (event: KeyboardEvent) => {
+      if (event.isComposing) return;
+      const isTypingKey =
+        event.key.length === 1 ||
+        event.key === "Enter" ||
+        event.key === "Backspace" ||
+        event.key === "Delete";
+      if (!isTypingKey) return;
+      awareness.setLocalStateField("lastEditTs", Date.now());
+    };
+
+    let dom: HTMLElement | null = null;
+    const attach = () => {
+      try {
+        dom = editor.view.dom;
+      } catch {
+        return;
+      }
+      dom.addEventListener("keydown", handleKeydown);
+    };
+
+    if (editor.isInitialized) {
+      attach();
+    } else {
+      editor.on("create", attach);
+    }
+
+    return () => {
+      editor.off("create", attach);
+      if (dom) {
+        dom.removeEventListener("keydown", handleKeydown);
+      }
+    };
+  }, [editor, provider]);
+
+  useEffect(() => {
+    if (!provider || !canEdit) return;
+
+    const typedProvider = provider as unknown as {
+      on: (event: string, callback: (count: number) => void) => void;
+      off: (event: string, callback: (count: number) => void) => void;
+      hasUnsyncedChanges?: boolean;
+    };
+
+    const handleUnsynced = (count: number) => {
+      if (count > 0) {
+        dirtyRef.current = true;
+        setSaveState("Saving...");
+        return;
+      }
+      if (dirtyRef.current) {
+        dirtyRef.current = false;
+        setSaveState("Saved");
+      }
+    };
+
+    typedProvider.on("unsyncedChanges", handleUnsynced);
+    if (typeof typedProvider.hasUnsyncedChanges === "boolean") {
+      handleUnsynced(typedProvider.hasUnsyncedChanges ? 1 : 0);
+    }
+
+    return () => {
+      typedProvider.off("unsyncedChanges", handleUnsynced);
+    };
+  }, [canEdit, provider]);
+
+  useEffect(() => {
+    return () => {
+      ydoc.destroy();
+    };
+  }, [ydoc]);
 
   const toolbarState =
     useEditorState({

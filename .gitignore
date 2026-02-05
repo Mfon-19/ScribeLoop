@@ -20,3 +20,7 @@ backend/target/
 # Env
 .env
 .env.local
+.env.*.local
+
+# Local Spring config
+backend/src/main/resources/application.properties
