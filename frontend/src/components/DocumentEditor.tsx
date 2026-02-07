@@ -135,7 +135,10 @@ export default function DocumentEditor() {
   const [shareLoading, setShareLoading] = useState(false);
   const [shareListLoading, setShareListLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [pdfError, setPdfError] = useState<string | null>(null);
+  const [pdfLoading, setPdfLoading] = useState(false);
   const dirtyRef = useRef(false);
+  const pdfInFlightRef = useRef(false);
   const profileRef = useRef({
     latencySamples: [] as number[],
     reconnectSamples: [] as number[],
@@ -408,6 +411,7 @@ export default function DocumentEditor() {
     setShareRole("VIEWER");
     setShareError(null);
     setShareStatus(null);
+    setPdfError(null);
   }, [documentId]);
 
   useEffect(() => {
@@ -699,6 +703,150 @@ export default function DocumentEditor() {
     };
   }, [canEdit, editor]);
 
+  const handleDownloadPdf = useCallback(async () => {
+    if (!editor || pdfInFlightRef.current) return;
+    pdfInFlightRef.current = true;
+    setPdfLoading(true);
+    setPdfError(null);
+
+    let exportRoot: HTMLDivElement | null = null;
+    try {
+      const [{ jsPDF }, html2canvasModule] = await Promise.all([
+        import("jspdf"),
+        import("html2canvas"),
+      ]);
+      const html2canvas = html2canvasModule.default;
+
+      const exportTitle =
+        title && title !== "Loading..." ? title : `Document ${documentId}`;
+
+      exportRoot = document.createElement("div");
+      exportRoot.style.cssText = [
+        "position:fixed",
+        "left:-100000px",
+        "top:0",
+        "width:794px",
+        "box-sizing:border-box",
+        "padding:56px 56px 64px",
+        "background:#ffffff",
+        "color:var(--foreground)",
+        "font-family:var(--font-body),system-ui,sans-serif",
+      ].join(";");
+
+      const heading = document.createElement("h1");
+      heading.textContent = exportTitle;
+      heading.style.cssText = [
+        "margin:0 0 16px",
+        "font-size:28px",
+        "line-height:1.2",
+        "font-family:var(--font-display),serif",
+        "color:var(--foreground)",
+      ].join(";");
+
+      const meta = document.createElement("div");
+      meta.textContent = `Exported ${new Date().toLocaleString()}`;
+      meta.style.cssText = [
+        "margin:0 0 28px",
+        "font-size:12px",
+        "font-weight:600",
+        "letter-spacing:0.18em",
+        "text-transform:uppercase",
+        "color:var(--muted)",
+      ].join(";");
+
+      const content = document.createElement("div");
+      content.className = "ProseMirror";
+      content.innerHTML = editor.getHTML();
+      content.style.cssText = [
+        "min-height:auto",
+        "border:none",
+        "padding:0",
+        "background:transparent",
+        "font-size:14px",
+        "line-height:1.65",
+      ].join(";");
+
+      exportRoot.append(heading, meta, content);
+      document.body.append(exportRoot);
+
+      const canvas = await html2canvas(exportRoot, {
+        scale: 2,
+        backgroundColor: "#ffffff",
+      });
+
+      const pdf = new jsPDF({ orientation: "p", unit: "mm", format: "a4" });
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const margin = 12;
+      const printableWidth = pageWidth - margin * 2;
+      const printableHeight = pageHeight - margin * 2;
+
+      const pxPerMm = canvas.width / printableWidth;
+      const pageHeightPx = Math.floor(printableHeight * pxPerMm);
+
+      let renderedY = 0;
+      let pageIndex = 0;
+      while (renderedY < canvas.height) {
+        const sliceHeightPx = Math.min(
+          pageHeightPx,
+          canvas.height - renderedY
+        );
+
+        const pageCanvas = document.createElement("canvas");
+        pageCanvas.width = canvas.width;
+        pageCanvas.height = sliceHeightPx;
+        const ctx = pageCanvas.getContext("2d");
+        if (!ctx) {
+          throw new Error("PDF export failed (canvas context).");
+        }
+
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
+        ctx.drawImage(
+          canvas,
+          0,
+          renderedY,
+          canvas.width,
+          sliceHeightPx,
+          0,
+          0,
+          canvas.width,
+          sliceHeightPx
+        );
+
+        const imgData = pageCanvas.toDataURL("image/jpeg", 0.92);
+        if (pageIndex > 0) {
+          pdf.addPage();
+        }
+
+        const sliceHeightMm = sliceHeightPx / pxPerMm;
+        pdf.addImage(
+          imgData,
+          "JPEG",
+          margin,
+          margin,
+          printableWidth,
+          sliceHeightMm,
+          undefined,
+          "FAST"
+        );
+
+        renderedY += sliceHeightPx;
+        pageIndex += 1;
+      }
+
+      pdf.save(toPdfFilename(exportTitle, documentId));
+    } catch (error) {
+      setPdfError(
+        error instanceof Error ? error.message : "Unable to generate PDF."
+      );
+    } finally {
+      pdfInFlightRef.current = false;
+      setPdfLoading(false);
+      exportRoot?.remove();
+    }
+  }, [documentId, editor, title]);
+
   if (loadError) {
     return (
       <div className="rounded-3xl border border-red-200 bg-red-50 p-6 text-sm text-red-700">
@@ -722,7 +870,7 @@ export default function DocumentEditor() {
             {canEdit ? ` · ${saveState}` : ""}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
           <span className="rounded-full border border-[color:var(--surface-border)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em]">
             {accessRole}
           </span>
@@ -731,10 +879,23 @@ export default function DocumentEditor() {
               Read only
             </span>
           ) : null}
+          <button
+            type="button"
+            onClick={handleDownloadPdf}
+            disabled={!editor || pdfLoading}
+            className="rounded-full bg-[color:var(--accent)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white shadow-[0_12px_24px_rgba(192,107,44,0.18)] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {pdfLoading ? "Preparing PDF..." : "Download PDF"}
+          </button>
         </div>
       </header>
 
       <main className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-6 pb-24">
+        {pdfError ? (
+          <div className="rounded-3xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+            {pdfError}
+          </div>
+        ) : null}
         <section className="rounded-3xl border border-[color:var(--surface-border)] bg-[color:var(--surface)] p-6 shadow-[0_20px_50px_rgba(23,23,23,0.08)]">
           {editor ? (
             <div className="mb-4 flex flex-wrap items-center gap-2 rounded-2xl border border-[color:var(--surface-border)] bg-[color:var(--accent-faint)] px-3 py-2 text-[color:var(--muted)]">
@@ -1035,4 +1196,17 @@ function ToolbarButton({
 
 function ToolbarDivider() {
   return <span className="h-6 w-px bg-[color:var(--surface-border)]" />;
+}
+
+function toPdfFilename(title: string, documentId: number) {
+  const fallback = documentId ? `document-${documentId}` : "document";
+  const base = title.trim() ? title.trim() : fallback;
+
+  const sanitized = base
+    .replace(/[\\/:*?"<>|]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 120);
+
+  return `${sanitized || fallback}.pdf`;
 }
